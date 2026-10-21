@@ -6,11 +6,14 @@
 
 #![allow(unsafe_code)] // Every block still needs `// SAFETY:` (clippy enforces it).
 
+mod clipboard;
 mod executor;
 mod hook;
 mod input;
 mod instance;
 mod layout;
+mod owner;
+mod selection;
 mod tray;
 mod worker;
 

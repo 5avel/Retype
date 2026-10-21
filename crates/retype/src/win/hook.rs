@@ -12,9 +12,7 @@ use windows::Win32::Foundation::{HMODULE, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook, UnhookWinEvent};
-use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetAsyncKeyState, VIRTUAL_KEY, VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
-};
+use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, DispatchMessageW, EVENT_OBJECT_FOCUS, EVENT_SYSTEM_FOREGROUND, GetMessageW,
     HC_ACTION, HHOOK, KBDLLHOOKSTRUCT, LLKHF_EXTENDED, LLKHF_INJECTED, LLMHF_INJECTED, MSG,
@@ -52,13 +50,36 @@ static PHYSICAL_MODIFIERS: AtomicU8 = AtomicU8::new(0);
 
 /// The sided modifiers the user is physically holding.
 pub fn physical_modifiers() -> Vec<u16> {
+    held_modifiers().collect()
+}
+
+/// Clears modifiers the tracking thinks are down but the system says are
+/// up: the hook misses key-ups on the secure desktop (Ctrl+Alt+Del, UAC,
+/// Win+L) or after a timeout. Call only while retype is not injecting:
+/// during injection the system state shows our own releases.
+pub fn reconcile_modifiers() {
+    for (i, vk) in SIDED_MODIFIERS.into_iter().enumerate() {
+        let bit = 1u8 << i;
+        if PHYSICAL_MODIFIERS.load(Ordering::Relaxed) & bit == 0 {
+            continue;
+        }
+        // SAFETY: no preconditions; reads async key state.
+        let state = unsafe { GetAsyncKeyState(i32::from(vk)) };
+        if state >= 0 {
+            // High bit clear: the key is up.
+            PHYSICAL_MODIFIERS.fetch_and(!bit, Ordering::Relaxed);
+        }
+    }
+}
+
+/// Allocation-free view of the tracked state, for the hook callback.
+fn held_modifiers() -> impl Iterator<Item = u16> {
     let bits = PHYSICAL_MODIFIERS.load(Ordering::Relaxed);
     SIDED_MODIFIERS
         .into_iter()
         .enumerate()
-        .filter(|(i, _)| bits & (1 << i) != 0)
+        .filter(move |(i, _)| bits & (1 << i) != 0)
         .map(|(_, vk)| vk)
-        .collect()
 }
 
 /// The running hook thread.
@@ -219,19 +240,10 @@ fn send(input: HookInput) {
     }
 }
 
-fn key_held(key: VIRTUAL_KEY) -> bool {
-    // SAFETY: no preconditions; reads async key state.
-    let state = unsafe { GetAsyncKeyState(i32::from(key.0)) };
-    state < 0 // high bit: currently down
-}
-
+/// Physical modifier state: our injected releases and restores must not
+/// change how the user's keys are read (e.g. a hotkey's auto-repeat).
 fn modifiers() -> Modifiers {
-    Modifiers {
-        shift: key_held(VK_SHIFT),
-        ctrl: key_held(VK_CONTROL),
-        alt: key_held(VK_MENU),
-        win: key_held(VK_LWIN) || key_held(VK_RWIN),
-    }
+    Modifiers::from_sided(held_modifiers())
 }
 
 /// Enqueues a key press; returns true if it is our hotkey and must be swallowed.

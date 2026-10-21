@@ -108,3 +108,43 @@ Newest at the bottom. Format: context → decision → consequences. Use `/adr`.
     is cleared.
 - Consequences: new `windows` feature `Win32_Globalization` (no new crate).
   Two variants of one language (e.g. US and Dvorak) cannot both be configured.
+
+## ADR-011 — Selection conversion via the clipboard (M4)
+
+- Context: SPEC 5.3 converts selected text by copy → convert → paste. The
+  copy is done by the target app, and the clipboard may hold anything,
+  including passwords.
+- Decision:
+  - Flow: snapshot every `HGLOBAL` clipboard format (at most 64 formats,
+    32 MiB) → Ctrl+Insert → wait for the clipboard sequence number to change
+    (500 ms; no change = nothing selected) → read `CF_UNICODETEXT` → convert
+    in the core → write → Shift+Insert → wait 400 ms → restore the snapshot.
+    Whether to restore is decided by the sequence number on every path (also
+    after a failed injection, and 300 ms more for a late copy), not by which
+    step succeeded. GDI-handle formats (bitmap, metafile, palette) are not
+    saved; Windows synthesises most from the DIB/text formats that are.
+  - Copy/paste use Ctrl+Insert / Shift+Insert, by scan code: with nothing
+    selected, Ctrl+C in a terminal interrupts the running program, while
+    Ctrl+Insert is harmless; navigation keys are the same in every layout.
+  - Everything retype writes (the converted text and the restore) carries
+    `ExcludeClipboardContentFromMonitorProcessing`, `CanIncludeInClipboardHistory = 0`
+    and `CanUploadToCloudClipboard = 0`. The app's own copy of the selection
+    does land in the Win+V history (and cloud clipboard, if the user enabled
+    sync); this is inherent to SPEC 5.3 and accepted by the owner.
+  - The source layout is detected from the text: the configured layout whose
+    distinctive characters it uses most (ties: the foreground layout). The
+    target follows `mode` from that source.
+  - Selections over 10 000 characters, or that would not change, are left
+    alone. Copied and converted text is zeroed after use, the snapshot on drop.
+  - A message-only window on the worker thread owns the clipboard; the
+    worker pumps its messages at least every 50 ms, because other apps *send*
+    it `WM_DESTROYCLIPBOARD`. Its lifetime ends with the worker, so shutdown
+    cannot deadlock on, or outlive, the tray window.
+  - The hook reads modifiers from its own physical key tracking instead of
+    `GetAsyncKeyState`, which also reflects our injected releases. Missed
+    key-ups (secure desktop, hook timeout) are reconciled against
+    `GetAsyncKeyState` on every worker tick and before each conversion.
+- Consequences: new `windows` features `Win32_System_DataExchange` and
+  `Win32_System_Memory` (no new crate). Mixed-script selections convert only
+  the characters of the detected source layout. Apps that copy the whole line
+  when nothing is selected (VS Code) get that line converted and pasted.

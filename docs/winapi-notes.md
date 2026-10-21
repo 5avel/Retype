@@ -59,6 +59,8 @@ Living document: add an entry whenever Windows behaviour surprises us.
   unassigned vk (`0xE8`) first ("mask key", as AutoHotkey does).
 - A held hotkey auto-repeats key-downs; LL hooks have no repeat flag, so
   repeats are told apart via key-ups.
+- The LL hook never sees key-ups that happen on the secure desktop
+  (Ctrl+Alt+Del, UAC, Win+L); self-tracked key state must be reconciled.
 - `SendInput` blocked by UIPI reports neither an error nor a short count.
 - UIPI: input to windows of a higher integrity level (admin) is blocked.
 
@@ -70,6 +72,22 @@ Living document: add an entry whenever Windows behaviour surprises us.
   formats is best-effort.
 - Wait for the copy to land (sequence number via `GetClipboardSequenceNumber`)
   instead of fixed sleeps.
+- `OpenClipboard(NULL)` + `EmptyClipboard` makes `SetClipboardData` fail; the
+  owner must be a window, and one with a message loop: other apps *send* it
+  `WM_DESTROYCLIPBOARD`, so a non-pumping owner thread would hang them. A
+  window owned by another thread is no better: that thread may be blocked
+  (e.g. the main thread in `join` at shutdown).
+- Reading delay-rendered formats makes the source app render them while we
+  hold the clipboard; cap the snapshot.
+- Ctrl+C with nothing selected interrupts the program in a terminal; use
+  Ctrl+Insert / Shift+Insert for copy/paste.
+- There is no signal for "the app has read the clipboard after Ctrl+V";
+  restore after a delay (400 ms), or the app pastes the original.
+- Keep our writes out of Win+V history and cloud sync with the registered
+  formats `ExcludeClipboardContentFromMonitorProcessing`,
+  `CanIncludeInClipboardHistory` (DWORD 0), `CanUploadToCloudClipboard` (DWORD 0).
+- windows-rs quirks: `GlobalFree` success returns NULL and is reported as
+  `Err`; `GlobalUnlock` reaching lock count 0 is reported as `Err` with code 0.
 
 ## Tray
 

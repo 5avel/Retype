@@ -8,15 +8,25 @@ use std::time::{Duration, Instant};
 
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::Globalization::LCIDToLocaleName;
-use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyboardLayout, GetKeyboardLayoutList, HKL};
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    GetKeyboardLayout, GetKeyboardLayoutList, HKL, MAPVK_VSC_TO_VK, MapVirtualKeyExW, ToUnicodeEx,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
     GetForegroundWindow, GetWindowThreadProcessId, PostMessageW, WM_INPUTLANGCHANGEREQUEST,
 };
 
-use retype_core::layout::LayoutId;
+use retype_core::layout::{KeyPos, LayoutId, LayoutTable};
 
 /// `LOCALE_NAME_MAX_LENGTH` (in UTF-16 units, including the NUL).
 const LOCALE_NAME_MAX_LENGTH: usize = 85;
+
+/// `ToUnicodeEx` flag: do not change the keyboard state (Windows 10 1607+).
+/// Without it, probing a dead key breaks the user's next dead key.
+const TOUNICODE_KEEP_STATE: u32 = 0x4;
+
+/// `VK_SHIFT` index and "down" bit in a key state array.
+const VK_SHIFT_INDEX: usize = 0x10;
+const KEY_DOWN: u8 = 0x80;
 
 /// How often to check whether a requested switch has applied.
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
@@ -45,6 +55,43 @@ impl Hkl {
         let written = unsafe { LCIDToLocaleName(language, Some(&mut name), 0) };
         let len = usize::try_from(written).ok()?.checked_sub(1)?; // minus NUL
         LayoutId::new(&String::from_utf16_lossy(&name[..len]))
+    }
+
+    /// Which character each key types in this layout (SPEC 5.3).
+    pub fn table(self) -> LayoutTable {
+        LayoutTable::from_probe(|pos| self.char_at(pos))
+    }
+
+    fn char_at(self, pos: KeyPos) -> Option<char> {
+        let hkl = self.to_raw();
+        // SAFETY: plain value conversion; any scan code is accepted.
+        let vk = unsafe { MapVirtualKeyExW(u32::from(pos.scan), MAPVK_VSC_TO_VK, Some(hkl)) };
+        if vk == 0 {
+            return None;
+        }
+        let mut state = [0u8; 256];
+        if pos.shift {
+            state[VK_SHIFT_INDEX] = KEY_DOWN;
+        }
+        let mut out = [0u16; 8];
+        // SAFETY: `state` is the 256-byte array the API requires and `out` a
+        // writable buffer whose length the wrapper passes. The flag keeps the
+        // kernel keyboard state (dead keys) untouched.
+        let written = unsafe {
+            ToUnicodeEx(
+                vk,
+                u32::from(pos.scan),
+                &state,
+                &mut out,
+                TOUNICODE_KEEP_STATE,
+                Some(hkl),
+            )
+        };
+        // 1 = one UTF-16 unit; -1 = dead key; 0 = nothing; 2+ = ligature.
+        if written != 1 {
+            return None;
+        }
+        char::from_u32(u32::from(out[0]))
     }
 }
 

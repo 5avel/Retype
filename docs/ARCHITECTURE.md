@@ -48,6 +48,7 @@ Why: Windows silently removes a low-level hook whose callback is slow
 | `LayoutTable`         | `layout`    | char ⇄ (scan, shift) for one layout, built by the app  |
 | `Config`              | `config`    | Parsed TOML with defaults and validation               |
 | `Step`, `KeyAction`   | `inject`    | Plan → exact key events, layout switches and waits     |
+| `SelectionConversion` | `selection` | Source/target layout and text for selection conversion |
 
 The app supplies `LayoutTable`s (built with `ToUnicodeEx`) and executes plans;
 the core never calls the OS, which keeps it deterministic and unit-testable.
@@ -60,7 +61,9 @@ the core never calls the OS, which keeps it deterministic and unit-testable.
 | `input`      | `SendInput` of core `KeyAction`s, held modifier state              |
 | `layout`     | Enumerate HKLs, foreground layout, switch layout, build tables     |
 | `executor`   | Runs a plan's `Step`s: resolves layouts, injects keys, switches    |
-| `clipboard`  | Save/restore clipboard, copy/paste selection with retries          |
+| `clipboard`  | Snapshot/restore clipboard, read/write text, privacy markers       |
+| `selection`  | Selection flow: copy, convert (core), paste, restore               |
+| `owner`      | Message-only clipboard owner window on the worker thread           |
 | `tray`       | `Shell_NotifyIconW`, menu, commands to main loop                   |
 | `instance`   | Named mutex for single instance                                    |
 | `worker`     | Worker thread: runs `core::Session`, executes commands             |

@@ -74,6 +74,16 @@ pub fn missing_layouts<'a>(
         .collect()
 }
 
+/// Scan codes of the keys that type characters: the four main rows plus the
+/// extra ISO key next to left Shift (0x56). Space is the same everywhere.
+pub const CHARACTER_SCANS: [std::ops::RangeInclusive<u16>; 5] = [
+    0x02..=0x0D,
+    0x10..=0x1B,
+    0x1E..=0x29,
+    0x2B..=0x35,
+    0x56..=0x56,
+];
+
 /// A physical key position: scan code plus Shift.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct KeyPos {
@@ -100,6 +110,22 @@ impl LayoutTable {
             table.by_char.entry(c).or_insert(pos);
         }
         table
+    }
+
+    /// Builds a table by asking `probe` which character each key of
+    /// [`CHARACTER_SCANS`] types, unshifted positions first. Keys that type
+    /// nothing, a control character or a dead key (`None`) are skipped.
+    pub fn from_probe(mut probe: impl FnMut(KeyPos) -> Option<char>) -> Self {
+        let mut entries = Vec::new();
+        for shift in [false, true] {
+            for scan in CHARACTER_SCANS.into_iter().flatten() {
+                let pos = KeyPos { scan, shift };
+                if let Some(c) = probe(pos).filter(|c| !c.is_control()) {
+                    entries.push((pos, c));
+                }
+            }
+        }
+        Self::from_entries(entries)
     }
 
     pub fn char_at(&self, pos: KeyPos) -> Option<char> {
@@ -192,6 +218,28 @@ mod tests {
             maybe_target_layout(&[], &id("en-US"), SwitchMode::Pair),
             None
         );
+    }
+
+    #[test]
+    fn probe_builds_the_same_table() {
+        let fixture = ru();
+        let table = LayoutTable::from_probe(|pos| fixture.char_at(pos));
+        assert_eq!(convert_text("ghbdtn", &en(), &table), "привет");
+        assert_eq!(
+            table.position_of(','),
+            Some(KeyPos {
+                scan: 0x35,
+                shift: true
+            })
+        );
+    }
+
+    #[test]
+    fn probe_skips_control_characters() {
+        let table = LayoutTable::from_probe(|pos| (pos.scan == 0x1C).then_some('\r'));
+        assert!(table.is_empty());
+        let table = LayoutTable::from_probe(|_| Some('\u{1b}'));
+        assert!(table.is_empty());
     }
 
     #[test]

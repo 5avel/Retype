@@ -35,8 +35,8 @@ Windows behaviour, an entry in `docs/manual-test-log.md`.
 
 ## M4 — Convert selection
 
-- [ ] Clipboard save/restore with retries and sequence-number wait
-- [ ] Build `LayoutTable` via `ToUnicodeEx` (no state change flag)
+- [x] Clipboard save/restore with retries and sequence-number wait
+- [x] Build `LayoutTable` via `ToUnicodeEx` (no state change flag)
 - [ ] Manual test matrix
 
 ## M5 — Polish

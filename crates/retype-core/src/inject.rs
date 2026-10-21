@@ -24,6 +24,12 @@ pub const SIDED_MODIFIERS: [u16; 8] = [
 /// Scan code of Backspace.
 const BACKSPACE_SCAN: u16 = 0x0E;
 
+/// Insert on the navigation block (extended, not the numpad 0 key).
+const INSERT: KeyCode = KeyCode::Scan {
+    scan: 0x52,
+    extended: true,
+};
+
 /// One step for the executor, run in order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Step {
@@ -58,16 +64,8 @@ pub enum KeyCode {
 /// or they would modify the injected keys. Afterwards (or when a step fails)
 /// the executor must run [`restore_modifiers`].
 pub fn execution_steps(plan: &ConversionPlan, held: &[u16]) -> Vec<Step> {
-    let held = sided(held);
-    let needs_mask = held.iter().any(|&m| is_alt_or_win(m));
-
     let mut steps = Steps::default();
-    if needs_mask {
-        steps.keys(&mask());
-    }
-    for &m in &held {
-        steps.keys(&[modifier(m, false)]);
-    }
+    steps.keys(&release_modifiers(held));
     let mut replayed = false;
     for op in &plan.ops {
         match op {
@@ -97,6 +95,39 @@ pub fn execution_steps(plan: &ConversionPlan, held: &[u16]) -> Vec<Step> {
     steps.0
 }
 
+/// Releases the held [`SIDED_MODIFIERS`] so they do not modify injected
+/// keys, masking Alt/Win first. Undo with [`restore_modifiers`].
+pub fn release_modifiers(held: &[u16]) -> Vec<KeyAction> {
+    let held = sided(held);
+    let mut actions = Vec::new();
+    if held.iter().any(|&m| is_alt_or_win(m)) {
+        actions.extend(mask());
+    }
+    actions.extend(held.iter().map(|&m| modifier(m, false)));
+    actions
+}
+
+/// Ctrl+Insert (copy). Unlike Ctrl+C it does not interrupt the running
+/// program in a terminal when nothing is selected, and navigation keys mean
+/// the same in every layout, so it goes by scan code.
+pub fn copy_keys() -> Vec<KeyAction> {
+    with_insert(vk::LCONTROL)
+}
+
+/// Shift+Insert (paste), see [`copy_keys`].
+pub fn paste_keys() -> Vec<KeyAction> {
+    with_insert(vk::LSHIFT)
+}
+
+/// Key-ups for the modifiers [`copy_keys`] and [`paste_keys`] press, sent
+/// when an injection fails part way so none stays logically down.
+pub fn shortcut_release() -> Vec<KeyAction> {
+    [vk::LCONTROL, vk::LSHIFT]
+        .into_iter()
+        .map(|m| modifier(m, false))
+        .collect()
+}
+
 /// Presses again the modifiers released by [`execution_steps`] that the user
 /// still holds. One let go of during the conversion stays up: its physical
 /// key-up found it already released, so pressing it would leave it stuck.
@@ -118,6 +149,9 @@ struct Steps(Vec<Step>);
 
 impl Steps {
     fn keys(&mut self, actions: &[KeyAction]) {
+        if actions.is_empty() {
+            return;
+        }
         if let Some(Step::Keys(last)) = self.0.last_mut() {
             last.extend_from_slice(actions);
         } else {
@@ -136,6 +170,13 @@ fn sided(keys: &[u16]) -> Vec<u16> {
         .into_iter()
         .filter(|m| keys.contains(m))
         .collect()
+}
+
+fn with_insert(m: u16) -> Vec<KeyAction> {
+    let mut actions = vec![modifier(m, true)];
+    actions.extend(tap(INSERT));
+    actions.push(modifier(m, false));
+    actions
 }
 
 fn tap(code: KeyCode) -> [KeyAction; 2] {
@@ -272,6 +313,28 @@ mod tests {
         assert_eq!(steps[3], Step::Settle);
         assert_eq!(steps[4], Step::SwitchLayout(id("en-US")));
         assert_eq!(steps.len(), 5);
+    }
+
+    #[test]
+    fn copy_and_paste_shortcuts() {
+        let insert = |down| scan(0x52, true, down);
+        let ctrl = |down| scan(0x1D, false, down);
+        let shift = |down| scan(0x2A, false, down);
+        assert_eq!(
+            copy_keys(),
+            [ctrl(true), insert(true), insert(false), ctrl(false)]
+        );
+        assert_eq!(
+            paste_keys(),
+            [shift(true), insert(true), insert(false), shift(false)]
+        );
+        assert_eq!(shortcut_release(), [ctrl(false), shift(false)]);
+    }
+
+    #[test]
+    fn release_without_held_modifiers_is_empty() {
+        assert_eq!(release_modifiers(&[]), []);
+        assert_eq!(release_modifiers(&[vk::RSHIFT]), [scan(0x36, false, false)]);
     }
 
     #[test]

@@ -8,14 +8,21 @@ use std::time::{Duration, Instant};
 use retype_core::event::{InputEvent, Millis};
 use retype_core::keystroke::{Keystroke, Modifiers};
 use retype_core::plan::{ConversionPlan, PlanOp, Scope};
+use retype_core::selection::convert_selection;
 use retype_core::session::{Command, Session};
 
 use super::executor::Executor;
-use super::hook::{OVERFLOW, PAUSED};
+use super::hook::{OVERFLOW, PAUSED, reconcile_modifiers};
+use super::owner::OwnerWindow;
+use super::selection::SelectionOutcome;
 use super::tray::TrayHandle;
 
 /// How often the session gets a `Tick` for the idle reset.
 const TICK: Duration = Duration::from_secs(1);
+
+/// Longest wait between message pumps for the clipboard owner window:
+/// other apps emptying the clipboard wait for it (see `owner`).
+const PUMP_INTERVAL: Duration = Duration::from_millis(50);
 
 /// Input as captured by the hook callbacks.
 #[derive(Debug, Clone, Copy)]
@@ -67,9 +74,20 @@ impl Worker {
     }
 
     fn run(mut self, rx: &Receiver<WorkerMsg>) {
+        let owner = match OwnerWindow::create() {
+            Ok(owner) => Some(owner),
+            Err(err) => {
+                log::error!("clipboard owner window: {err}; selection conversion disabled");
+                None
+            }
+        };
         log::info!("worker started");
+        let mut last_tick = Instant::now();
         loop {
-            let message = rx.recv_timeout(TICK);
+            let message = rx.recv_timeout(PUMP_INTERVAL);
+            if let Some(owner) = &owner {
+                owner.pump();
+            }
             if OVERFLOW.swap(false, Ordering::Relaxed) {
                 log::warn!("input queue overflowed; buffer cleared");
                 self.session.handle(InputEvent::FocusChanged);
@@ -78,16 +96,22 @@ impl Worker {
                 Ok(WorkerMsg::Input(input)) => self.to_event(input),
                 Ok(WorkerMsg::TogglePause) => {
                     let command = self.session.toggle_pause();
-                    self.execute(command);
+                    self.execute(command, owner.as_ref());
                     continue;
                 }
                 Ok(WorkerMsg::Shutdown) | Err(RecvTimeoutError::Disconnected) => break,
-                Err(RecvTimeoutError::Timeout) => InputEvent::Tick { time: self.now() },
+                Err(RecvTimeoutError::Timeout) if last_tick.elapsed() >= TICK => {
+                    last_tick = Instant::now();
+                    reconcile_modifiers();
+                    InputEvent::Tick { time: self.now() }
+                }
+                Err(RecvTimeoutError::Timeout) => continue,
             };
             if let Some(command) = self.session.handle(event) {
-                self.execute(command);
+                self.execute(command, owner.as_ref());
             }
         }
+        drop(owner);
         log::info!("worker stopped");
     }
 
@@ -104,7 +128,7 @@ impl Worker {
         }
     }
 
-    fn execute(&mut self, command: Command) {
+    fn execute(&mut self, command: Command, owner: Option<&OwnerWindow>) {
         match command {
             Command::PauseChanged { paused } => {
                 PAUSED.store(paused, Ordering::Relaxed);
@@ -112,10 +136,10 @@ impl Worker {
                 log::info!("{}", if paused { "paused" } else { "resumed" });
             }
             Command::Convert(scope) => self.convert(scope),
-            // Selection conversion is ROADMAP M4.
-            Command::ConvertSelection => {
-                log::info!("convert selection requested; not implemented yet");
-            }
+            Command::ConvertSelection => match owner {
+                Some(owner) => self.convert_selection(owner),
+                None => log::warn!("convert selection: no clipboard owner window"),
+            },
         }
     }
 
@@ -135,6 +159,25 @@ impl Worker {
                 log::warn!("convert {scope:?} not run: {err}");
                 self.session.clear();
             }
+        }
+    }
+}
+
+impl Worker {
+    /// Converts the selected text. Logs counts only, never content (P4).
+    fn convert_selection(&mut self, owner: &OwnerWindow) {
+        let config = self.session.config();
+        let result = self.executor.convert_selection(
+            owner.hwnd(),
+            config.switch_layout_after_convert,
+            |text, current, tables| convert_selection(text, current, config, tables),
+        );
+        match result {
+            Ok(SelectionOutcome::Converted { chars }) => {
+                log::info!("converted selection, {chars} chars");
+            }
+            Ok(outcome) => log::info!("convert selection: {outcome:?}"),
+            Err(err) => log::warn!("convert selection failed: {err}"),
         }
     }
 }

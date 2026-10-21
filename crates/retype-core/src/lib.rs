@@ -14,6 +14,7 @@ pub mod inject;
 pub mod keystroke;
 pub mod layout;
 pub mod plan;
+pub mod selection;
 pub mod session;
 #[cfg(test)]
 mod testing;
@@ -25,6 +26,7 @@ pub use inject::{KeyAction, KeyCode, Step, execution_steps, restore_modifiers};
 pub use keystroke::{Keystroke, Modifiers};
 pub use layout::{LayoutId, LayoutTable};
 pub use plan::{ConversionPlan, PlanOp, Scope};
+pub use selection::{SelectionConversion, convert_selection};
 pub use session::{Command, Session};
 
 /// Upper bound on recorded keystrokes (SPEC P2). The buffer never grows past it.

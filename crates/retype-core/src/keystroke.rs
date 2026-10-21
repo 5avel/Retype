@@ -47,6 +47,21 @@ impl Modifiers {
         win: false,
     };
 
+    /// Modifier state from the left/right modifier keys that are down.
+    pub fn from_sided(held: impl IntoIterator<Item = u16>) -> Self {
+        let mut mods = Self::NONE;
+        for key in held {
+            match key {
+                vk::LSHIFT | vk::RSHIFT => mods.shift = true,
+                vk::LCONTROL | vk::RCONTROL => mods.ctrl = true,
+                vk::LMENU | vk::RMENU => mods.alt = true,
+                vk::LWIN | vk::RWIN => mods.win = true,
+                _ => {}
+            }
+        }
+        mods
+    }
+
     /// Ctrl, Alt or Win is held: the key is a command, not text (SPEC P3).
     pub fn is_command(self) -> bool {
         self.ctrl || self.alt || self.win
@@ -133,6 +148,22 @@ mod tests {
         assert_eq!(classify(vk::TAB), KeyClass::Reset);
         assert_eq!(classify(0x25), KeyClass::Reset); // Left arrow
         assert_eq!(classify(vk::F1), KeyClass::Reset);
+    }
+
+    #[test]
+    fn modifiers_from_sided_keys() {
+        let mods = Modifiers::from_sided([vk::RSHIFT, vk::LCONTROL, 0x41]);
+        assert_eq!(
+            mods,
+            Modifiers {
+                shift: true,
+                ctrl: true,
+                alt: false,
+                win: false
+            }
+        );
+        assert!(Modifiers::from_sided([vk::RWIN]).win);
+        assert_eq!(Modifiers::from_sided([]), Modifiers::NONE);
     }
 
     #[test]
