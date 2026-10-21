@@ -1,0 +1,34 @@
+# retype configuration (example).
+# Copy to %APPDATA%\retype\config.toml, or next to retype.exe together with an
+# empty file named `portable`.
+
+# Layouts to switch between, by language tag. With two layouts conversion
+# toggles between them; with more, `mode` decides.
+layouts = ["en-US", "ru-RU"]
+
+# "pair"  - convert between the current layout and the first other one in the list
+# "cycle" - convert to the next layout in the list
+mode = "pair"
+
+# Switch the system layout to the target layout after converting.
+switch_layout_after_convert = true
+
+# Keep spaces typed after the word when converting the last word.
+keep_trailing_spaces = true
+
+# Clear the buffer after this many seconds without typing.
+idle_reset_seconds = 30
+
+[hotkeys]
+convert_last_word = "Pause"
+convert_last_line = "Shift+Pause"
+convert_selection = "ScrollLock"
+toggle_pause      = "Ctrl+Pause"
+
+# Processes where retype does nothing (case-insensitive exe names).
+[exclusions]
+processes = ["KeePassXC.exe", "mstsc.exe"]
+
+[log]
+# error | warn | info | debug. Key content is never logged at any level.
+level = "info"

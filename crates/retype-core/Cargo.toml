@@ -1,0 +1,12 @@
+[package]
+name = "retype-core"
+description = "OS-independent logic of retype: key buffer, conversion plans, layout tables, config."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

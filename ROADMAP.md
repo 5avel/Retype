@@ -1,0 +1,54 @@
+# Roadmap
+
+Work top to bottom. Each item should end with green `/verify` and, for
+Windows behaviour, an entry in `docs/manual-test-log.md`.
+
+## M0 — Scaffold
+
+- [x] Workspace, lints, rustfmt, cargo-deny, CI
+- [x] Agent docs, rules, skills, subagent
+- [x] Policy test (no networking APIs/crates)
+
+## M1 — Core logic (`retype-core`, any OS)
+
+- [ ] `Keystroke`, `InputEvent` types
+- [ ] `KeyBuffer`: append, backspace, word/line boundaries, reset rules, bounds (P2, P3)
+- [ ] `Session`: event → buffer updates, hotkey recognition from config
+- [ ] `ConversionPlan` for last word / last line, toggle back on second press
+- [ ] `LayoutTable` + text conversion for selections (tests with hardcoded en/ru/uk tables)
+- [ ] `Config`: TOML parsing, defaults, validation errors with clear messages
+
+## M2 — Windows skeleton
+
+- [ ] Logger to `%LOCALAPPDATA%\retype\retype.log` (no key content)
+- [ ] Single-instance mutex
+- [ ] Hook thread + message loop + bounded channel + worker thread
+- [ ] Tray icon with Pause / Open config / Exit
+- [ ] Clean shutdown (unhook, remove tray icon)
+
+## M3 — Convert last word / line
+
+- [ ] Enumerate layouts, foreground layout, switch layout with confirmation
+- [ ] SendInput executor for `ConversionPlan` (modifier release/restore)
+- [ ] Manual test matrix from SPEC §7
+
+## M4 — Convert selection
+
+- [ ] Clipboard save/restore with retries and sequence-number wait
+- [ ] Build `LayoutTable` via `ToUnicodeEx` (no state change flag)
+- [ ] Manual test matrix
+
+## M5 — Polish
+
+- [ ] Excluded processes list
+- [ ] Opt-in autostart (HKCU Run)
+- [ ] Config reload, layout indicator (optional)
+
+## M6 — Release 1.0
+
+- [ ] `/security-audit` clean
+- [ ] Release build in CI with SHA-256, README with build-from-source
+
+## Later
+
+- [ ] Autoswitch (n-gram detection), off by default, behind config flag
