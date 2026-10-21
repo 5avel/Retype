@@ -11,6 +11,8 @@ publish = false
 [workspace.dependencies]
 retype-core = { path = "crates/retype-core" }
 log = "0.4"
+serde = { version = "1", default-features = false, features = ["std", "derive"] }
+toml = { version = "1", default-features = false, features = ["std", "parse", "serde"] }
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

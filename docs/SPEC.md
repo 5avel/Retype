@@ -98,8 +98,10 @@ Notepad, Windows Terminal / PowerShell, VS Code, Chrome/Edge/Firefox text
 fields, Telegram Desktop, MS Word, an elevated window (expected: not working,
 no crash), games/fullscreen apps (expected: retype ignores them).
 
-## 8. Open questions
+## 8. Resolved questions
 
-- Q1. Default target for three layouts: fixed pair or cycle?
-- Q2. Ship autostart in v1 or later?
-- Q3. Code signing (unsigned binaries may trigger SmartScreen/Defender heuristics).
+| ID | Question                                  | Decision                                                                 |
+|----|-------------------------------------------|--------------------------------------------------------------------------|
+| Q1 | Default target for three layouts          | `pair` by default (current ⇄ first other in list); `cycle` via config. ADR-006 |
+| Q2 | Ship autostart in v1?                     | Yes, opt-in, off by default (HKCU Run, M5). ADR-007                      |
+| Q3 | Code signing                              | Unsigned in v1; publish SHA-256 and build-from-source docs. Revisit before 1.0 if Defender/SmartScreen flags builds. ADR-008 |

@@ -5,3 +5,11 @@ generates a checklist; results are appended here.
 
 | Date       | Build / commit | Scenario | App | Result | Notes |
 |------------|----------------|----------|-----|--------|-------|
+| 2026-10-21 | local (M2)     | Start: hooks, worker, tray            | —       | ok     | from retype.log |
+| 2026-10-21 | local (M2)     | Convert-word hotkey recognised        | —       | ok     | Ctrl+Shift+Z, 6 keys buffered |
+| 2026-10-21 | local (M2)     | Pause/resume hotkey                   | —       | ok     | Ctrl+Shift+P |
+| 2026-10-21 | local (M2)     | Open config creates file from example | —       | ok     | |
+| 2026-10-21 | local (M2)     | Exit: hooks removed, worker stopped   | —       | ok     | |
+| 2026-10-21 | local (M2)     | Log has no key content                | —       | ok     | checked by Claude |
+| 2026-10-22 | local (M3)     | Convert last word / line (M3.md)      | —       | ok     | user: all works; build before review fixes (modifier restore) |
+| 2026-10-22 | local (M3)     | Convert selection hotkey              | —       | n/a    | not implemented until M4 (logs only) |

@@ -8,6 +8,8 @@
 // unsafe is allowed only inside `win/` (it re-allows it at module level).
 #![deny(unsafe_code)]
 
+mod logger;
+mod paths;
 #[cfg(windows)]
 mod win;
 

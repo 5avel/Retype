@@ -35,17 +35,19 @@ belongs in `retype-core`.
 Why: Windows silently removes a low-level hook whose callback is slow
 (`LowLevelHooksTimeout`). The hook therefore never does work itself.
 
-## Core types (planned)
+## Core types
 
-| Type             | Module            | Purpose                                                |
-|------------------|-------------------|--------------------------------------------------------|
-| `Keystroke`      | `keystroke`       | vk, scan code, shift, extended flag                    |
-| `InputEvent`     | `event`           | Key down/up, mouse click, focus change, timer          |
-| `KeyBuffer`      | `buffer`          | Bounded record of the current line, word boundaries    |
-| `Session`        | `session`         | Feeds events into the buffer, recognises hotkeys       |
-| `ConversionPlan` | `plan`            | Ordered ops: Backspace(n), SwitchLayout(id), Replay(…) |
-| `LayoutTable`    | `layout`          | char ⇄ (vk, shift) for one layout, built by the app    |
-| `Config`         | `config`          | Parsed TOML with defaults and validation               |
+| Type                  | Module      | Purpose                                                |
+|-----------------------|-------------|--------------------------------------------------------|
+| `Keystroke`           | `keystroke` | vk, scan code, shift, extended flag                    |
+| `InputEvent`          | `event`     | Key down, mouse click, focus change, timer tick        |
+| `KeyBuffer`           | `buffer`    | Bounded record of the current line, word boundaries    |
+| `Hotkey`, `HotkeySet` | `hotkey`    | Parse `Ctrl+Pause`-style strings, match key presses    |
+| `Session`             | `session`   | Feeds events into the buffer, recognises hotkeys       |
+| `ConversionPlan`      | `plan`      | Ordered ops: Backspace(n), SwitchLayout(id), Replay(…) |
+| `LayoutTable`         | `layout`    | char ⇄ (scan, shift) for one layout, built by the app  |
+| `Config`              | `config`    | Parsed TOML with defaults and validation               |
+| `Step`, `KeyAction`   | `inject`    | Plan → exact key events, layout switches and waits     |
 
 The app supplies `LayoutTable`s (built with `ToUnicodeEx`) and executes plans;
 the core never calls the OS, which keeps it deterministic and unit-testable.
@@ -55,10 +57,15 @@ the core never calls the OS, which keeps it deterministic and unit-testable.
 | Module       | Responsibility                                                     |
 |--------------|--------------------------------------------------------------------|
 | `hook`       | Install/uninstall `WH_KEYBOARD_LL` (+ `WH_MOUSE_LL`), message loop |
-| `input`      | `SendInput` helpers (key down/up, backspace, scancode replay)      |
+| `input`      | `SendInput` of core `KeyAction`s, held modifier state              |
 | `layout`     | Enumerate HKLs, foreground layout, switch layout, build tables     |
+| `executor`   | Runs a plan's `Step`s: resolves layouts, injects keys, switches    |
 | `clipboard`  | Save/restore clipboard, copy/paste selection with retries          |
 | `tray`       | `Shell_NotifyIconW`, menu, commands to main loop                   |
 | `instance`   | Named mutex for single instance                                    |
+| `worker`     | Worker thread: runs `core::Session`, executes commands             |
 
 Gotchas are collected in `docs/winapi-notes.md`.
+
+Safe, OS-independent app code lives next to `win/`: `paths.rs` (config and
+log locations) and `logger.rs` (file logger for the `log` facade).

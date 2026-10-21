@@ -11,26 +11,27 @@ Windows behaviour, an entry in `docs/manual-test-log.md`.
 
 ## M1 — Core logic (`retype-core`, any OS)
 
-- [ ] `Keystroke`, `InputEvent` types
-- [ ] `KeyBuffer`: append, backspace, word/line boundaries, reset rules, bounds (P2, P3)
-- [ ] `Session`: event → buffer updates, hotkey recognition from config
-- [ ] `ConversionPlan` for last word / last line, toggle back on second press
-- [ ] `LayoutTable` + text conversion for selections (tests with hardcoded en/ru/uk tables)
-- [ ] `Config`: TOML parsing, defaults, validation errors with clear messages
+- [x] `Keystroke`, `InputEvent` types
+- [x] `KeyBuffer`: append, backspace, word/line boundaries, reset rules, bounds (P2, P3)
+- [x] `Session`: event → buffer updates, hotkey recognition from config
+- [x] `ConversionPlan` for last word / last line, toggle back on second press
+- [x] `LayoutTable` + text conversion for selections (tests with hardcoded en/ru/uk tables)
+- [x] `Config`: TOML parsing, defaults, validation errors with clear messages
 
 ## M2 — Windows skeleton
 
-- [ ] Logger to `%LOCALAPPDATA%\retype\retype.log` (no key content)
-- [ ] Single-instance mutex
-- [ ] Hook thread + message loop + bounded channel + worker thread
-- [ ] Tray icon with Pause / Open config / Exit
-- [ ] Clean shutdown (unhook, remove tray icon)
+- [x] Logger to `%LOCALAPPDATA%\retype\retype.log` (no key content)
+- [x] Single-instance mutex
+- [x] Hook thread + message loop + bounded channel + worker thread
+- [x] Tray icon with Pause / Open config / Exit
+- [x] Clean shutdown (unhook, remove tray icon)
+- [ ] Manual test on Windows (`docs/manual-tests/M2.md`)
 
 ## M3 — Convert last word / line
 
-- [ ] Enumerate layouts, foreground layout, switch layout with confirmation
-- [ ] SendInput executor for `ConversionPlan` (modifier release/restore)
-- [ ] Manual test matrix from SPEC §7
+- [x] Enumerate layouts, foreground layout, switch layout with confirmation
+- [x] SendInput executor for `ConversionPlan` (modifier release/restore)
+- [x] Manual test matrix from SPEC §7
 
 ## M4 — Convert selection
 
