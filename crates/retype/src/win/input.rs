@@ -14,12 +14,16 @@ use retype_core::inject::{KeyAction, KeyCode};
 /// Input to windows of a higher integrity level is silently blocked by UIPI;
 /// that is not reported as an error (SPEC §3).
 pub fn send_input_keys(actions: &[KeyAction]) -> windows::core::Result<()> {
-    let inputs: Vec<INPUT> = actions.iter().map(to_input).collect();
+    let mut inputs: Vec<INPUT> = actions.iter().map(to_input).collect();
     let size = i32::try_from(size_of::<INPUT>()).unwrap_or(i32::MAX);
     // SAFETY: `inputs` is a valid slice of initialised keyboard INPUTs and
     // `size` is the size of one element, as the API requires.
     let sent = unsafe { SendInput(&inputs, size) };
-    if usize::try_from(sent).unwrap_or(0) == inputs.len() {
+    let count = inputs.len();
+    // The array holds replayed scan codes: overwrite before freeing it.
+    inputs.fill(INPUT::default());
+    std::hint::black_box(&inputs);
+    if usize::try_from(sent).unwrap_or(0) == count {
         Ok(())
     } else {
         Err(windows::core::Error::from_thread())

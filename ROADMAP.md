@@ -56,8 +56,9 @@ Windows behaviour, an entry in `docs/manual-test-log.md`.
 
 ## M6 — Release 1.0
 
-- [ ] `/security-audit` clean
-- [ ] Release build in CI with SHA-256, README with build-from-source
+- [x] `/security-audit` clean
+- [x] Release build in CI with SHA-256, README with build-from-source
+- [ ] Tag v1.0.0 with `/release` (owner)
 
 ## Later
 

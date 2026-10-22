@@ -29,6 +29,10 @@ const PASTE_SETTLE: Duration = Duration::from_millis(400);
 
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
 
+/// Restoring the clipboard is retried this many times, this far apart.
+const RESTORE_ATTEMPTS: u32 = 5;
+const RESTORE_RETRY: Duration = Duration::from_millis(200);
+
 /// What happened, for the log (counts only, P4).
 #[derive(Debug)]
 pub enum SelectionOutcome {
@@ -158,11 +162,22 @@ fn send_shortcut(keys: &[retype_core::inject::KeyAction]) -> Result<(), ExecErro
     })
 }
 
+/// Puts the user's clipboard back (P6). Each attempt already retries
+/// opening for ~200 ms; another app holding the clipboard longer gets a few
+/// more chances before we give up.
 fn restore(owner: HWND, snapshot: &Snapshot) {
-    match Clipboard::open(owner).and_then(|clipboard| clipboard.restore(snapshot)) {
-        Ok(0) => {}
-        Ok(lost) => log::warn!("clipboard restored without {lost} formats"),
-        Err(err) => log::error!("clipboard not restored: {err}"),
+    for attempt in 1..=RESTORE_ATTEMPTS {
+        match Clipboard::open(owner).and_then(|clipboard| clipboard.restore(snapshot)) {
+            Ok(0) => return,
+            Ok(lost) => {
+                log::warn!("clipboard restored without {lost} formats");
+                return;
+            }
+            Err(err) if attempt == RESTORE_ATTEMPTS => {
+                log::error!("clipboard not restored: {err}");
+            }
+            Err(_) => thread::sleep(RESTORE_RETRY),
+        }
     }
 }
 

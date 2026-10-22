@@ -162,6 +162,8 @@ impl Worker {
                 Err(RecvTimeoutError::Timeout) if last_tick.elapsed() >= TICK => {
                     last_tick = Instant::now();
                     reconcile_modifiers();
+                    // Also covers missing focus hooks (SetWinEventHook failed).
+                    self.update_exclusion();
                     if last_config_check.elapsed() >= CONFIG_POLL {
                         last_config_check = Instant::now();
                         self.reload_config_if_changed();
@@ -182,7 +184,10 @@ impl Worker {
         match input {
             HookInput::Key { key, mods, time } => InputEvent::KeyDown { key, mods, time },
             HookInput::KeyUp { vk, time } => InputEvent::KeyUp { vk, time },
-            HookInput::MouseClick => InputEvent::MouseClick,
+            HookInput::MouseClick => {
+                self.update_exclusion();
+                InputEvent::MouseClick
+            }
             HookInput::FocusChanged => {
                 self.update_exclusion();
                 InputEvent::FocusChanged

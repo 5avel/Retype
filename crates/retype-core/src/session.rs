@@ -5,7 +5,7 @@ use crate::config::Config;
 use crate::doubletap::DoubleTap;
 use crate::event::{InputEvent, Millis};
 use crate::hotkey::HotkeyAction;
-use crate::keystroke::{KeyClass, Modifiers, classify, vk};
+use crate::keystroke::{KeyClass, Modifiers, classify, vk, wipe_keys};
 use crate::layout::{LayoutId, maybe_target_layout};
 use crate::plan::{Conversion, ConversionPlan, PlanOptions, Scope, plan_conversion};
 
@@ -133,9 +133,12 @@ impl Session {
             keep_trailing_spaces: self.config.keep_trailing_spaces,
             switch_layout_after_convert: self.config.switch_layout_after_convert,
         };
-        let Conversion { plan, buffer_after } =
-            plan_conversion(&self.buffer, scope, current, target, options)?;
+        let Conversion {
+            plan,
+            mut buffer_after,
+        } = plan_conversion(&self.buffer, scope, current, target, options)?;
         self.buffer.replace(&buffer_after);
+        wipe_keys(&mut buffer_after);
         Some(plan)
     }
 
@@ -218,6 +221,18 @@ mod tests {
         ctrl: true,
         alt: false,
         win: false,
+    };
+    const ALT: Modifiers = Modifiers {
+        shift: false,
+        ctrl: false,
+        alt: true,
+        win: false,
+    };
+    const WIN: Modifiers = Modifiers {
+        shift: false,
+        ctrl: false,
+        alt: false,
+        win: true,
     };
 
     fn key(vk_code: u16, shift: bool) -> Keystroke {
@@ -321,6 +336,8 @@ mod tests {
             down(vk::TAB, Modifiers::NONE, 0),
             down(0x25, Modifiers::NONE, 0), // Left arrow
             down(0x43, CTRL, 0),            // Ctrl+C
+            down(0x46, ALT, 0),             // Alt+F
+            down(0x44, WIN, 0),             // Win+D
             InputEvent::MouseClick,
             InputEvent::FocusChanged,
         ];

@@ -87,6 +87,13 @@ impl Keystroke {
     };
 }
 
+/// Overwrites recorded keys before their memory is freed (best effort,
+/// `.claude/rules/security.md`).
+pub fn wipe_keys(keys: &mut [Keystroke]) {
+    keys.fill(Keystroke::ZEROED);
+    std::hint::black_box(&keys);
+}
+
 /// What a key press means for the buffer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeyClass {

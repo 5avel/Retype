@@ -4,7 +4,7 @@
 use std::thread;
 use std::time::Duration;
 
-use retype_core::inject::{Step, execution_steps, restore_modifiers};
+use retype_core::inject::{Step, execution_steps, restore_modifiers, wipe_actions};
 use retype_core::layout::{LayoutId, LayoutTable, missing_layouts};
 use retype_core::plan::{ConversionPlan, PlanOp};
 
@@ -126,22 +126,33 @@ impl Executor {
         with_held_modifiers(|held| self.run_steps(plan, &foreground, held))
     }
 
+    /// Runs the plan's steps. Every key step is wiped afterwards, sent or not
+    /// (an early exit leaves the most unsent keys behind).
     fn run_steps(
         &self,
         plan: &ConversionPlan,
         foreground: &Foreground,
         held: &[u16],
     ) -> Result<(), ExecError> {
-        for step in execution_steps(plan, held) {
+        let mut steps = execution_steps(plan, held);
+        let result = self.run_each(&steps, foreground);
+        for step in &mut steps {
+            if let Step::Keys(actions) = step {
+                wipe_actions(actions);
+            }
+        }
+        result
+    }
+
+    fn run_each(&self, steps: &[Step], foreground: &Foreground) -> Result<(), ExecError> {
+        for step in steps {
             if !foreground.is_current() {
                 return Err(ExecError::FocusChanged);
             }
             match step {
-                Step::Keys(actions) => {
-                    send_input_keys(&actions).map_err(ExecError::Injection)?;
-                }
+                Step::Keys(actions) => send_input_keys(actions).map_err(ExecError::Injection)?,
                 Step::SwitchLayout(id) => {
-                    let hkl = self.hkl_of(&id)?;
+                    let hkl = self.hkl_of(id)?;
                     if !foreground.switch_layout(hkl, SWITCH_TIMEOUT) {
                         log::warn!("switch to {id} not confirmed within {SWITCH_TIMEOUT:?}");
                     }

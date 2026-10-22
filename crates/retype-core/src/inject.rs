@@ -143,6 +143,16 @@ pub fn restore_modifiers(held_before: &[u16], held_now: &[u16]) -> Vec<KeyAction
     actions
 }
 
+/// Overwrites injected key events (they hold replayed scan codes) before
+/// their memory is freed.
+pub fn wipe_actions(actions: &mut [KeyAction]) {
+    actions.fill(KeyAction {
+        code: KeyCode::Vk(0),
+        down: false,
+    });
+    std::hint::black_box(&actions);
+}
+
 /// Accumulates steps, merging adjacent key events into one `Keys` step.
 #[derive(Default)]
 struct Steps(Vec<Step>);

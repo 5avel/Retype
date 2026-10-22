@@ -201,3 +201,27 @@ Newest at the bottom. Format: context → decision → consequences. Use `/adr`.
     indicator is drawn.
 - Consequences: a build script exists (it reads only `assets/retype.ico`).
   GNU-target builds have no exe icon.
+
+## ADR-014 — Release process and audit hardening (M6)
+
+- Context: the pre-release `/security-audit` asked for stronger guarantees
+  on clipboard restore, exclusions and copies of typed keys.
+- Decision:
+  - Release: pushing a `v*` tag (via `/release`) makes CI build the exe,
+    write `retype.exe.sha256` in `sha256sum -c` format, verify it, and create
+    a **draft** GitHub release with both files; the owner reviews and
+    publishes it. No third-party release action: the runner's `gh` CLI.
+  - Clipboard restore is retried 5 times, 200 ms apart, on top of the open
+    retries. A copy that lands later than ~0.8 s after Ctrl+Insert is not
+    undone (documented limit of P6).
+  - Exclusion is re-checked on every worker tick (1 s) and mouse click, so
+    it stays right even if the focus hook could not be installed.
+  - Copies of typed keys are overwritten before release where cheap: the
+    buffer is allocated once at full size and wipes keys it drops;
+    `LastWord`, `ConversionPlan`, the session's after-buffer, injected key
+    steps (sent or not) and the `SendInput` array are wiped.
+  - The policy test and `deny.toml` ban more networking APIs and crates
+    (`Win32_NetworkManagement`, Winsock, more WinINet, async runtimes).
+  - License files: MIT and Apache-2.0, copyright "Pavel Boliubash".
+- Consequences: a worst-case restore blocks the worker for ~2 s (the hook is
+  unaffected). Version bump and CHANGELOG stay with `/release`.

@@ -23,9 +23,10 @@ jobs:
       - run: cargo build --release -p retype
       - name: SHA-256
         shell: pwsh
+        # `sha256sum -c` format: "<hash>  retype.exe", LF line ending.
         run: |
-          (Get-FileHash target/release/retype.exe -Algorithm SHA256).Hash.ToLower() |
-            Out-File -Encoding ascii target/release/retype.exe.sha256
+          $hash = (Get-FileHash target/release/retype.exe -Algorithm SHA256).Hash.ToLower()
+          [IO.File]::WriteAllText("target/release/retype.exe.sha256", "$hash  retype.exe`n")
       - uses: actions/upload-artifact@v4
         with:
           name: retype-windows-x64
@@ -45,3 +46,33 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: EmbarkStudios/cargo-deny-action@v2
+
+  # On a version tag (pushed by /release): a draft GitHub release with the
+  # exe and its SHA-256. The owner reviews and publishes it by hand.
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, core-linux, dependency-policy]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: retype-windows-x64
+      - name: Check the hash
+        run: sha256sum -c retype.exe.sha256
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          hash=$(cut -d' ' -f1 retype.exe.sha256)
+          cat > notes.md <<EOF
+          SHA-256 of \`retype.exe\`: \`$hash\`
+
+          Check it in PowerShell: \`(Get-FileHash retype.exe -Algorithm SHA256).Hash\`.
+          The exe is not code-signed (ADR-008); Windows SmartScreen may warn on
+          first start. You can also build it yourself, see the README.
+          EOF
+          gh release create "$TAG" retype.exe retype.exe.sha256 \
+            --repo "$GITHUB_REPOSITORY" --draft --title "retype $TAG" --notes-file notes.md

@@ -43,6 +43,10 @@ deny = [
     { crate = "native-tls", reason = "TLS implies networking (ADR-001)" },
     { crate = "openssl", reason = "TLS implies networking (ADR-001)" },
     { crate = "tokio", reason = "no async runtime needed; usually pulls networking" },
+    { crate = "async-std", reason = "no async runtime needed; usually pulls networking" },
+    { crate = "smol", reason = "no async runtime needed; usually pulls networking" },
+    { crate = "surf", reason = "networking is forbidden (ADR-001)" },
+    { crate = "socket2", reason = "networking is forbidden (ADR-001)" },
     { crate = "self_update", reason = "auto-update is forbidden (SPEC P5)" },
 ]
 

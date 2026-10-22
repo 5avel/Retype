@@ -3,15 +3,25 @@
 use std::collections::VecDeque;
 
 use crate::MAX_BUFFER_KEYS;
-use crate::keystroke::{KeyClass, Keystroke, classify};
+use crate::keystroke::{KeyClass, Keystroke, classify, wipe_keys};
 
 /// Keys typed since the last reset, oldest first.
 ///
 /// Holds at most [`MAX_BUFFER_KEYS`] entries; on overflow the oldest key is
 /// dropped, so the last word stays correct.
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyBuffer {
     keys: VecDeque<Keystroke>,
+}
+
+impl Default for KeyBuffer {
+    /// Allocated once at full size, so growing never leaves copies of typed
+    /// keys behind in freed memory.
+    fn default() -> Self {
+        Self {
+            keys: VecDeque::with_capacity(MAX_BUFFER_KEYS),
+        }
+    }
 }
 
 impl KeyBuffer {
@@ -30,6 +40,9 @@ impl KeyBuffer {
     /// Records a printable key or a space.
     pub fn push(&mut self, key: Keystroke) {
         if self.keys.len() == MAX_BUFFER_KEYS {
+            if let Some(oldest) = self.keys.front_mut() {
+                *oldest = Keystroke::ZEROED;
+            }
             self.keys.pop_front();
         }
         self.keys.push_back(key);
@@ -37,6 +50,9 @@ impl KeyBuffer {
 
     /// Mirrors a Backspace typed by the user.
     pub fn backspace(&mut self) {
+        if let Some(last) = self.keys.back_mut() {
+            *last = Keystroke::ZEROED;
+        }
         self.keys.pop_back();
     }
 
@@ -85,11 +101,18 @@ impl KeyBuffer {
     }
 }
 
-/// Result of [`KeyBuffer::last_word`].
+/// Result of [`KeyBuffer::last_word`]. Wiped when dropped.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LastWord {
     pub word: Vec<Keystroke>,
     pub spaces: Vec<Keystroke>,
+}
+
+impl Drop for LastWord {
+    fn drop(&mut self) {
+        wipe_keys(&mut self.word);
+        wipe_keys(&mut self.spaces);
+    }
 }
 
 #[cfg(test)]

@@ -1,7 +1,7 @@
 //! Conversion plans: what the app must do to retype text in another layout.
 
 use crate::buffer::KeyBuffer;
-use crate::keystroke::{KeyClass, Keystroke, classify};
+use crate::keystroke::{KeyClass, Keystroke, classify, wipe_keys};
 use crate::layout::LayoutId;
 
 /// Which recorded text to convert.
@@ -22,10 +22,21 @@ pub enum PlanOp {
     Replay(Vec<Keystroke>),
 }
 
-/// Ordered steps that retype text in another layout (ADR-003).
+/// Ordered steps that retype text in another layout (ADR-003). The replay
+/// keys are wiped when the plan is dropped.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConversionPlan {
     pub ops: Vec<PlanOp>,
+}
+
+impl Drop for ConversionPlan {
+    fn drop(&mut self) {
+        for op in &mut self.ops {
+            if let PlanOp::Replay(keys) = op {
+                wipe_keys(keys);
+            }
+        }
+    }
 }
 
 /// Options that shape a plan, taken from the config.
