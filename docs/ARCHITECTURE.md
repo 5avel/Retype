@@ -51,6 +51,9 @@ Why: Windows silently removes a low-level hook whose callback is slow
 | `SelectionConversion` | `selection` | Source/target layout and text for selection conversion |
 | `load_config`         | `load`      | Which config to apply at startup and on reload         |
 | `DoubleTap`           | `doubletap` | Double right Shift detection                           |
+| `NgramModel`          | `ngram`     | Letter-trigram language models (embedded tables)       |
+| `AutoswitchMemory`    | `autoswitch`| Wrong-layout decision, undo window, rejected words     |
+| `autoswitch_start`    | `span`      | Short words before a corrected word that join it       |
 | `Indicator`           | `indicator` | Tray icon label, colors and rounded-square mask        |
 | `maybe_suggest_layout`| `suggest`   | "Did you mean uk-UA?" for unknown configured layouts  |
 

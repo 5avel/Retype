@@ -3,7 +3,7 @@
 //! Callbacks only translate and enqueue (ADR-004): they must return within
 //! `LowLevelHooksTimeout` or Windows silently removes the hook.
 
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::sync::mpsc::{self, SyncSender, TrySendError};
 use std::sync::{Mutex, OnceLock, TryLockError};
 use std::thread::{self, JoinHandle};
@@ -22,8 +22,10 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WM_XBUTTONDOWN,
 };
 
+use retype_core::event::Millis;
 use retype_core::hotkey::HotkeySet;
-use retype_core::inject::SIDED_MODIFIERS;
+use retype_core::inject::{KeyAction, KeyCode, SIDED_MODIFIERS};
+use retype_core::keystroke::vk;
 use retype_core::keystroke::{Keystroke, Modifiers};
 
 use super::worker::{HookInput, WorkerMsg, now_millis};
@@ -45,6 +47,57 @@ pub static PAUSED: AtomicBool = AtomicBool::new(false);
 /// True while the foreground app is in `exclusions.processes`: its keys,
 /// hotkeys included, go to the app untouched (except pause/resume).
 pub static EXCLUDED: AtomicBool = AtomicBool::new(false);
+
+/// Set by the worker while autoswitch may act (on, not paused, not
+/// excluded): then every Space starts holding the following keys.
+pub static HOLD_ARMED: AtomicBool = AtomicBool::new(false);
+
+/// Keys typed right after a Space are held back while the worker decides
+/// about the word, so a correction (Backspace, switch, retype) cannot
+/// interleave with them. The worker replays them in order and stops
+/// holding ([`release_held`]).
+static HOLDING: AtomicBool = AtomicBool::new(false);
+static HOLD_SINCE: AtomicU64 = AtomicU64::new(0);
+static HELD: Mutex<Vec<KeyAction>> = Mutex::new(Vec::new());
+/// Beyond this many events the hook stops holding and lets keys through.
+const MAX_HELD: usize = 64;
+
+/// Stops holding and returns the held key events, oldest first.
+pub fn release_held() -> Vec<KeyAction> {
+    HOLDING.store(false, Ordering::Relaxed);
+    match HELD.lock() {
+        Ok(mut held) => std::mem::take(&mut *held),
+        Err(poisoned) => std::mem::take(&mut *poisoned.into_inner()),
+    }
+}
+
+/// How long keys have been held, if they are.
+pub fn hold_age() -> Option<Millis> {
+    HOLDING
+        .load(Ordering::Relaxed)
+        .then(|| now_millis().saturating_sub(HOLD_SINCE.load(Ordering::Relaxed)))
+}
+
+/// Holds one key event if holding; false lets it through.
+fn hold(vk: u16, scan: u16, extended: bool, down: bool) -> bool {
+    if !HOLDING.load(Ordering::Relaxed) {
+        return false;
+    }
+    let Ok(mut held) = HELD.try_lock() else {
+        return false; // the worker is releasing right now
+    };
+    if held.len() >= MAX_HELD {
+        HOLDING.store(false, Ordering::Relaxed);
+        return false;
+    }
+    let code = if scan == 0 {
+        KeyCode::Vk(vk)
+    } else {
+        KeyCode::Scan { scan, extended }
+    };
+    held.push(KeyAction { code, down });
+    true
+}
 
 /// Replaces the hotkeys the callback matches (config reload).
 pub fn set_hotkeys(hotkeys: HotkeySet) {
@@ -246,11 +299,18 @@ impl Drop for Hooks {
     }
 }
 
-fn send(input: HookInput) {
-    if let Some(shared) = SHARED.get()
-        && let Err(TrySendError::Full(_)) = shared.tx.try_send(WorkerMsg::Input(input))
-    {
-        OVERFLOW.store(true, Ordering::Relaxed);
+/// Enqueues input for the worker; false if it could not be delivered.
+fn send(input: HookInput) -> bool {
+    let Some(shared) = SHARED.get() else {
+        return false;
+    };
+    match shared.tx.try_send(WorkerMsg::Input(input)) {
+        Ok(()) => true,
+        Err(TrySendError::Full(_)) => {
+            OVERFLOW.store(true, Ordering::Relaxed);
+            false
+        }
+        Err(TrySendError::Disconnected(_)) => false,
     }
 }
 
@@ -267,36 +327,55 @@ fn on_key(message: u32, info: &KBDLLHOOKSTRUCT) -> bool {
     }
     let is_up = message == WM_KEYUP || message == WM_SYSKEYUP;
     track_modifier(info.vkCode, is_up);
+    let vk_code = u16::try_from(info.vkCode).unwrap_or(0);
+    let scan = u16::try_from(info.scanCode).unwrap_or(0);
+    let extended = (info.flags.0 & LLKHF_EXTENDED.0) != 0;
     if is_up {
         // Lets the session tell a hotkey's auto-repeat from a new press.
         send(HookInput::KeyUp {
-            vk: u16::try_from(info.vkCode).unwrap_or(0),
+            vk: vk_code,
             time: now_millis(),
         });
-        return false;
+        return hold(vk_code, scan, extended, false);
     }
     if message != WM_KEYDOWN && message != WM_SYSKEYDOWN {
         return false;
     }
     let mods = modifiers();
     let key = Keystroke {
-        vk: u16::try_from(info.vkCode).unwrap_or(0),
-        scan: u16::try_from(info.scanCode).unwrap_or(0),
-        extended: (info.flags.0 & LLKHF_EXTENDED.0) != 0,
+        vk: vk_code,
+        scan,
+        extended,
         shift: mods.shift,
     };
-    send(HookInput::Key {
+    let sent = send(HookInput::Key {
         key,
         mods,
         time: now_millis(),
     });
+    if swallow_hotkey(key.vk, mods) {
+        return true;
+    }
+    if hold(vk_code, scan, extended, true) {
+        return true;
+    }
+    // The Space itself goes through; what follows waits for the worker's
+    // autoswitch decision. Only if the worker will see this Space.
+    if key.vk == vk::SPACE && !mods.is_command() && sent && HOLD_ARMED.load(Ordering::Relaxed) {
+        HOLD_SINCE.store(now_millis(), Ordering::Relaxed);
+        HOLDING.store(true, Ordering::Relaxed);
+    }
+    false
+}
 
+/// True if this key press is our hotkey and must not reach the app.
+fn swallow_hotkey(vk_code: u16, mods: Modifiers) -> bool {
     let guard = match HOTKEYS.try_lock() {
         Ok(guard) => guard,
         Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
         Err(TryLockError::WouldBlock) => return false,
     };
-    let maybe_action = guard.and_then(|hotkeys| hotkeys.action_for(key.vk, mods));
+    let maybe_action = guard.and_then(|hotkeys| hotkeys.action_for(vk_code, mods));
     drop(guard);
     maybe_action.is_some_and(|action| {
         action.swallowed(

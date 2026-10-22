@@ -33,6 +33,8 @@ pub struct Config {
     pub hotkeys: HotkeySet,
     /// Double tap of right Shift converts the last word.
     pub double_right_shift: bool,
+    /// Convert words typed in the wrong layout automatically (ADR-015).
+    pub autoswitch: bool,
     /// Lowercased executable names.
     pub excluded_processes: Vec<String>,
     pub log_level: LogLevel,
@@ -52,6 +54,7 @@ impl Default for Config {
             idle_reset_seconds: 30,
             hotkeys: HotkeySet::default(),
             double_right_shift: true,
+            autoswitch: false,
             excluded_processes: Vec::new(),
             log_level: LogLevel::Info,
         }
@@ -122,6 +125,8 @@ struct RawConfig {
     exclusions: RawExclusions,
     #[serde(default)]
     log: RawLog,
+    #[serde(default)]
+    autoswitch: RawAutoswitch,
 }
 
 #[derive(Default, Deserialize)]
@@ -139,6 +144,12 @@ struct RawHotkeys {
 struct RawExclusions {
     #[serde(default)]
     processes: Vec<String>,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawAutoswitch {
+    enabled: Option<bool>,
 }
 
 #[derive(Default, Deserialize)]
@@ -187,6 +198,7 @@ impl RawConfig {
                 .unwrap_or(defaults.idle_reset_seconds),
             hotkeys,
             double_right_shift,
+            autoswitch: self.autoswitch.enabled.unwrap_or(defaults.autoswitch),
             excluded_processes,
             log_level: self.log.level.unwrap_or(defaults.log_level),
         })

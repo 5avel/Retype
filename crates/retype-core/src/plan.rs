@@ -65,7 +65,7 @@ pub fn plan_conversion(
     target: &LayoutId,
     options: PlanOptions,
 ) -> Option<Conversion> {
-    let mut line = buffer.line();
+    let line = buffer.line();
     let (erase, replay) = match scope {
         Scope::LastLine => (line.len(), line.clone()),
         Scope::LastWord => {
@@ -77,8 +77,35 @@ pub fn plan_conversion(
             (last.word.len() + last.spaces.len(), replay)
         }
     };
+    build(line, erase, replay, current, target, options)
+}
+
+/// Like [`plan_conversion`] for every key from index `start` of the line to
+/// its end, spaces included (autoswitch fixing several words at once).
+pub fn plan_tail(
+    buffer: &KeyBuffer,
+    start: usize,
+    current: &LayoutId,
+    target: &LayoutId,
+    options: PlanOptions,
+) -> Option<Conversion> {
+    let line = buffer.line();
+    let replay = line.get(start..)?.to_vec();
+    build(line, replay.len(), replay, current, target, options)
+}
+
+/// Erase `erase` keys from the end of `line`, switch, replay `replay`.
+fn build(
+    mut line: Vec<Keystroke>,
+    erase: usize,
+    replay: Vec<Keystroke>,
+    current: &LayoutId,
+    target: &LayoutId,
+    options: PlanOptions,
+) -> Option<Conversion> {
     // Spaces look the same in every layout: nothing to fix.
     if replay.iter().all(|k| classify(k.vk) != KeyClass::Printable) {
+        wipe_keys(&mut line);
         return None;
     }
 
@@ -180,6 +207,16 @@ mod tests {
         };
         let c = plan_conversion(&buffer("AB"), Scope::LastWord, &en(), &ru(), options).unwrap();
         assert_eq!(c.plan.ops.last(), Some(&PlanOp::SwitchLayout(en())));
+    }
+
+    #[test]
+    fn tail_from_an_index() {
+        let c = plan_tail(&buffer("AB CD EF "), 3, &en(), &ru(), OPTIONS).unwrap();
+        assert_eq!(c.plan.ops[0], PlanOp::Backspace(6));
+        assert_eq!(c.plan.ops[2], PlanOp::Replay(keys("CD EF ")));
+        assert_eq!(c.buffer_after, keys("AB CD EF "));
+        assert_eq!(plan_tail(&buffer("AB"), 3, &en(), &ru(), OPTIONS), None);
+        assert_eq!(plan_tail(&buffer("AB  "), 2, &en(), &ru(), OPTIONS), None);
     }
 
     #[test]

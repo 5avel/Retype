@@ -62,4 +62,5 @@ Windows behaviour, an entry in `docs/manual-test-log.md`.
 
 ## Later
 
-- [ ] Autoswitch (n-gram detection), off by default, behind config flag
+- [x] Autoswitch (n-gram detection), off by default, behind config flag
+- [x] Manual test (`docs/manual-tests/autoswitch.md`)

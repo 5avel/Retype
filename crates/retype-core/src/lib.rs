@@ -6,6 +6,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod autoswitch;
 pub mod buffer;
 pub mod config;
 pub mod doubletap;
@@ -16,9 +17,11 @@ pub mod inject;
 pub mod keystroke;
 pub mod layout;
 pub mod load;
+pub mod ngram;
 pub mod plan;
 pub mod selection;
 pub mod session;
+pub mod span;
 pub mod suggest;
 #[cfg(test)]
 mod testing;

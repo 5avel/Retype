@@ -225,3 +225,50 @@ Newest at the bottom. Format: context → decision → consequences. Use `/adr`.
   - License files: MIT and Apache-2.0, copyright "Pavel Boliubash".
 - Consequences: a worst-case restore blocks the worker for ~2 s (the hook is
   unaffected). Version bump and CHANGELOG stay with `/release`.
+
+## ADR-015 — Autoswitch (letter trigrams, after Space, undo by hotkey)
+
+- Context: the owner asked for automatic correction; ROADMAP "Later" item,
+  SPEC kept it off by default.
+- Decision:
+  - Detection: per-language letter-trigram tables (en, ru, uk) built by
+    `tools/make_ngrams.py` from public-domain texts (Project Gutenberg,
+    Wikisource) downloaded once at development time; only the counts are
+    committed (`assets/ngrams/*.tsv`, ~140 KB) and embedded with
+    `include_str!`. retype itself never touches the network.
+  - Score of a text in a language: mean ln((count + 0.5) / total) over the
+    trigrams of its letter runs padded as `^run$`, minus the language's
+    corpus baseline (identical in Python and Rust).
+  - When a word is finished with Space, the word is scored as typed and as
+    it would read in every other configured layout that has a model. It is
+    converted when the best other reading has at least 3 letters, a
+    normalized score of at least -2.0 and a gain of at least 4.0; if the
+    usual target (`layouts` / `mode`) is within 0.75 of the best, it wins
+    (Russian and Ukrainian share most letters). Thresholds were tuned on
+    real words, jargon (git, npm, https, kubectl) and wrong-layout words;
+    missing a correction is preferred to a wrong one.
+  - Short words (1–2 keys) are never judged alone, but join a correction:
+    going back from the corrected word, each short word directly before it
+    is converted too while it reads better in the target (two letters:
+    higher score; one letter: a real one-letter word only in the target,
+    from a fixed list), so `рш ьн тфьу` becomes `hi my name`.
+  - After a correction the layout stays switched. Pressing the convert-word
+    hotkey before typing anything else undoes it (back to the original
+    layout, the short words included) and the word is not corrected again
+    until exit. Only an FNV-1a
+    hash of its key positions is kept, at most 128 (SPEC P2 updated).
+  - `[autoswitch] enabled = false` by default; off while paused and in
+    excluded apps. Layouts without a model (e.g. de) are never touched.
+  - Type-ahead: while autoswitch may act, the hook holds the physical keys
+    typed after each Space until the worker has decided about the word, then
+    the worker replays them in order (injected, so not recorded twice).
+    Hotkeys are still handled at once. At most 64 events are held; a 500 ms
+    timeout releases them if the Space never reached the worker.
+  - Scoring copies of the word (decoded text, trigram buffer) are wiped;
+    runs under 2 letters are skipped in both the script and the core.
+    Rejected-word hashes are cleared on pause and when autoswitch is
+    turned off.
+- Consequences: keys typed right after Space reach the app a few
+  milliseconds later. Models only for en, ru, uk; more need texts and a run of the
+  script. The corpus is not in the repository, so regenerating the tables
+  needs the texts again.

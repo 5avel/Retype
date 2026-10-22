@@ -63,6 +63,9 @@ Living document: add an entry whenever Windows behaviour surprises us.
   do not seem to reset the count, so repeated double-Shift conversions can
   bring up the Sticky Keys prompt. Documented, not worked around (owner's
   decision; changing the user's accessibility settings is not ours to do).
+- Editing text the user is still typing (autoswitch) races with their next
+  keys: hold the physical keys in the LL hook (swallow + remember), run the
+  edit, then replay the held keys with `SendInput`.
 - The LL hook never sees key-ups that happen on the secure desktop
   (Ctrl+Alt+Del, UAC, Win+L); self-tracked key state must be reconciled.
 - `SendInput` blocked by UIPI reports neither an error nor a short count.

@@ -1,13 +1,15 @@
 //! The session turns input events into buffer updates and commands.
 
+use crate::autoswitch::{AutoswitchMemory, maybe_autoswitch_target};
 use crate::buffer::KeyBuffer;
 use crate::config::Config;
 use crate::doubletap::DoubleTap;
 use crate::event::{InputEvent, Millis};
 use crate::hotkey::HotkeyAction;
 use crate::keystroke::{KeyClass, Modifiers, classify, vk, wipe_keys};
-use crate::layout::{LayoutId, maybe_target_layout};
-use crate::plan::{Conversion, ConversionPlan, PlanOptions, Scope, plan_conversion};
+use crate::layout::{LayoutId, LayoutTable, maybe_target_layout};
+use crate::plan::{Conversion, ConversionPlan, PlanOptions, Scope, plan_conversion, plan_tail};
+use crate::span::autoswitch_start;
 
 /// What the app should do after an event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18,6 +20,8 @@ pub enum Command {
     ConvertSelection,
     /// Pause state changed; update the tray.
     PauseChanged { paused: bool },
+    /// A word was just finished: ask [`Session::plan_autoswitch`].
+    AutoSwitch,
 }
 
 /// State of one running retype instance.
@@ -33,6 +37,7 @@ pub struct Session {
     /// fire again.
     maybe_held_hotkey: Option<(u16, Modifiers)>,
     double_shift: DoubleTap,
+    autoswitch: AutoswitchMemory,
 }
 
 impl Session {
@@ -45,6 +50,7 @@ impl Session {
             excluded: false,
             maybe_held_hotkey: None,
             double_shift: DoubleTap::new(vk::RSHIFT),
+            autoswitch: AutoswitchMemory::default(),
         }
     }
 
@@ -54,6 +60,9 @@ impl Session {
 
     /// Applies a reloaded config. The buffer is cleared.
     pub fn set_config(&mut self, config: Config) {
+        if !config.autoswitch {
+            self.autoswitch.clear();
+        }
         self.config = config;
         self.reset();
     }
@@ -109,10 +118,21 @@ impl Session {
                     self.reset();
                 }
                 self.last_key = Some(time);
-                match classify(key.vk) {
+                let class = classify(key.vk);
+                if class != KeyClass::Modifier {
+                    self.autoswitch.forget_undo();
+                }
+                match class {
                     KeyClass::Modifier => {}
                     _ if mods.is_command() => self.reset(),
-                    KeyClass::Printable | KeyClass::Space => self.buffer.push(key),
+                    KeyClass::Space => {
+                        let word_ended = self.buffer.ends_with_printable();
+                        self.buffer.push(key);
+                        if word_ended && self.config.autoswitch {
+                            return Some(Command::AutoSwitch);
+                        }
+                    }
+                    KeyClass::Printable => self.buffer.push(key),
                     KeyClass::Backspace => self.buffer.backspace(),
                     KeyClass::Reset => self.reset(),
                 }
@@ -124,15 +144,98 @@ impl Session {
     /// Builds the plan for a [`Command::Convert`], given the foreground
     /// window's current layout, and updates the buffer to what will be on
     /// screen afterwards so that pressing the hotkey again converts back.
+    ///
+    /// Right after an autoswitch, converting the last word undoes it: back to
+    /// the original layout, and the word is left alone from then on.
     pub fn plan(&mut self, scope: Scope, current: &LayoutId) -> Option<ConversionPlan> {
         if self.paused || self.excluded {
             return None;
         }
-        let target = maybe_target_layout(&self.config.layouts, current, self.config.mode)?;
-        let options = PlanOptions {
-            keep_trailing_spaces: self.config.keep_trailing_spaces,
-            switch_layout_after_convert: self.config.switch_layout_after_convert,
+        let maybe_undo = match scope {
+            Scope::LastWord => self
+                .autoswitch
+                .maybe_undo_target()
+                .map(|(original, span)| (original.clone(), span)),
+            Scope::LastLine => None,
         };
+        let plan = match maybe_undo {
+            // Undo the whole autoswitch, short words included.
+            Some((original, span)) => {
+                let options = PlanOptions {
+                    keep_trailing_spaces: true,
+                    switch_layout_after_convert: true,
+                };
+                let start = self.buffer.len().checked_sub(span)?;
+                let plan = self.apply_tail(start, current, &original, options)?;
+                self.autoswitch.undone();
+                plan
+            }
+            None => {
+                let options = PlanOptions {
+                    keep_trailing_spaces: self.config.keep_trailing_spaces,
+                    switch_layout_after_convert: self.config.switch_layout_after_convert,
+                };
+                let target =
+                    maybe_target_layout(&self.config.layouts, current, self.config.mode)?.clone();
+                self.apply(scope, current, &target, options)?
+            }
+        };
+        Some(plan)
+    }
+
+    /// Builds the autoswitch plan for the word just finished, if it was typed
+    /// in the wrong layout. `tables` are the installed layouts' tables.
+    pub fn plan_autoswitch(
+        &mut self,
+        current: &LayoutId,
+        tables: &[(LayoutId, LayoutTable)],
+    ) -> Option<ConversionPlan> {
+        if self.paused || self.excluded || !self.config.autoswitch {
+            return None;
+        }
+        let last = self.buffer.last_word();
+        if self.autoswitch.is_rejected(&last.word) {
+            return None;
+        }
+        let target = maybe_autoswitch_target(&last.word, current, &self.config, tables)?;
+        let mut line = self.buffer.line();
+        let start = autoswitch_start(&line, current, &target, tables);
+        wipe_keys(&mut line);
+        let options = PlanOptions {
+            keep_trailing_spaces: true,
+            switch_layout_after_convert: true,
+        };
+        let plan = self.apply_tail(start, current, &target, options)?;
+        let span = self.buffer.len() - start;
+        self.autoswitch.switched(&last.word, current, span);
+        Some(plan)
+    }
+
+    /// Plans converting the keys from `start` to the end of the line.
+    fn apply_tail(
+        &mut self,
+        start: usize,
+        current: &LayoutId,
+        target: &LayoutId,
+        options: PlanOptions,
+    ) -> Option<ConversionPlan> {
+        let Conversion {
+            plan,
+            mut buffer_after,
+        } = plan_tail(&self.buffer, start, current, target, options)?;
+        self.buffer.replace(&buffer_after);
+        wipe_keys(&mut buffer_after);
+        Some(plan)
+    }
+
+    /// Plans a conversion and updates the buffer to what will be on screen.
+    fn apply(
+        &mut self,
+        scope: Scope,
+        current: &LayoutId,
+        target: &LayoutId,
+        options: PlanOptions,
+    ) -> Option<ConversionPlan> {
         let Conversion {
             plan,
             mut buffer_after,
@@ -169,6 +272,9 @@ impl Session {
     /// Pauses or resumes, e.g. from the tray menu. The buffer is cleared.
     pub fn toggle_pause(&mut self) -> Command {
         self.paused = !self.paused;
+        if self.paused {
+            self.autoswitch.clear();
+        }
         self.reset();
         Command::PauseChanged {
             paused: self.paused,
@@ -200,6 +306,7 @@ impl Session {
     fn reset(&mut self) {
         self.buffer.clear();
         self.last_key = None;
+        self.autoswitch.forget_undo();
     }
 }
 
@@ -471,6 +578,187 @@ mod tests {
         type_text(&mut s, "abc");
         s.set_excluded(false);
         assert_eq!(s.buffered_keys(), 3);
+    }
+
+    mod autoswitch_flow {
+        use super::*;
+        use crate::testing::{en, ru, uk};
+
+        #[test]
+        fn space_after_a_word_asks_only_when_enabled() {
+            let mut off = Session::new(Config::default());
+            type_en(&mut off, "ghbdtn");
+            assert_eq!(off.handle(space()), None);
+
+            let mut on = session();
+            type_en(&mut on, "ghbdtn");
+            assert_eq!(on.handle(space()), Some(Command::AutoSwitch));
+            assert_eq!(on.handle(space()), None, "second space ends no word");
+        }
+
+        #[test]
+        fn converts_and_switches_layout() {
+            let mut s = session();
+            type_en(&mut s, "ghbdtn");
+            s.handle(space());
+            let plan = s.plan_autoswitch(&id("en-US"), &tables()).unwrap();
+            assert_eq!(plan.ops[0], PlanOp::Backspace(7), "word and space");
+            assert_eq!(plan.ops[1], PlanOp::SwitchLayout(id("ru-RU")));
+            assert_eq!(plan.ops.len(), 3, "stays in the new layout");
+        }
+
+        #[test]
+        fn real_words_are_left_alone() {
+            let mut s = session();
+            type_en(&mut s, "hello");
+            s.handle(space());
+            assert_eq!(s.plan_autoswitch(&id("en-US"), &tables()), None);
+        }
+
+        #[test]
+        fn hotkey_right_after_undoes_and_remembers() {
+            let mut s = session();
+            type_en(&mut s, "ghbdtn");
+            s.handle(space());
+            s.plan_autoswitch(&id("en-US"), &tables()).unwrap();
+            let undo = s.plan(Scope::LastWord, &id("ru-RU")).unwrap();
+            assert_eq!(undo.ops[1], PlanOp::SwitchLayout(id("en-US")));
+
+            s.handle(InputEvent::FocusChanged);
+            type_en(&mut s, "ghbdtn");
+            s.handle(space());
+            assert_eq!(
+                s.plan_autoswitch(&id("en-US"), &tables()),
+                None,
+                "rejected word stays"
+            );
+        }
+
+        #[test]
+        fn hotkey_through_handle_keeps_the_undo_window() {
+            let mut s = session();
+            type_en(&mut s, "ghbdtn");
+            s.handle(space());
+            s.plan_autoswitch(&id("en-US"), &tables()).unwrap();
+            assert_eq!(
+                s.handle(down(vk::PAUSE, Modifiers::NONE, 0)),
+                Some(Command::Convert(Scope::LastWord))
+            );
+            let undo = s.plan(Scope::LastWord, &id("ru-RU")).unwrap();
+            assert_eq!(
+                undo.ops[1],
+                PlanOp::SwitchLayout(id("en-US")),
+                "undo, not pair"
+            );
+        }
+
+        #[test]
+        fn pause_forgets_rejected_words() {
+            let mut s = session();
+            type_en(&mut s, "ghbdtn");
+            s.handle(space());
+            s.plan_autoswitch(&id("en-US"), &tables()).unwrap();
+            s.plan(Scope::LastWord, &id("ru-RU")).unwrap();
+            s.toggle_pause();
+            s.toggle_pause();
+            type_en(&mut s, "ghbdtn");
+            s.handle(space());
+            assert!(s.plan_autoswitch(&id("en-US"), &tables()).is_some());
+        }
+
+        #[test]
+        fn short_words_before_join_and_undo_together() {
+            let mut s = session();
+            for word in ["рш", "ьн", "тфьу"] {
+                type_with(&mut s, word, &ru());
+                s.handle(space());
+            }
+            let plan = s.plan_autoswitch(&id("ru-RU"), &tables()).unwrap();
+            assert_eq!(plan.ops[0], PlanOp::Backspace(11), "hi my name + spaces");
+            assert_eq!(plan.ops[1], PlanOp::SwitchLayout(id("en-US")));
+            let undo = s.plan(Scope::LastWord, &id("en-US")).unwrap();
+            assert_eq!(undo.ops[0], PlanOp::Backspace(11), "undo restores it all");
+            assert_eq!(undo.ops[1], PlanOp::SwitchLayout(id("ru-RU")));
+        }
+
+        #[test]
+        fn typing_on_ends_the_undo_window() {
+            let mut s = session();
+            type_en(&mut s, "ghbdtn");
+            s.handle(space());
+            s.plan_autoswitch(&id("en-US"), &tables()).unwrap();
+            type_en(&mut s, "a");
+            let plan = s.plan(Scope::LastWord, &id("ru-RU")).unwrap();
+            assert_eq!(plan.ops[1], PlanOp::SwitchLayout(id("en-US")));
+            s.handle(InputEvent::FocusChanged);
+            type_en(&mut s, "ghbdtn");
+            s.handle(space());
+            assert!(
+                s.plan_autoswitch(&id("en-US"), &tables()).is_some(),
+                "not rejected: it was an ordinary conversion"
+            );
+        }
+
+        #[test]
+        fn paused_or_excluded_never_switch() {
+            let mut paused = session();
+            type_en(&mut paused, "ghbdtn");
+            paused.toggle_pause();
+            assert_eq!(paused.plan_autoswitch(&id("en-US"), &tables()), None);
+            let mut excluded = session();
+            type_en(&mut excluded, "ghbdtn");
+            excluded.set_excluded(true);
+            assert_eq!(excluded.plan_autoswitch(&id("en-US"), &tables()), None);
+        }
+
+        fn session() -> Session {
+            Session::new(Config {
+                autoswitch: true,
+                layouts: vec![id("en-US"), id("ru-RU"), id("uk-UA")],
+                ..Config::default()
+            })
+        }
+
+        /// Types `text` with the en-US key positions (real scan codes).
+        fn type_en(s: &mut Session, text: &str) {
+            type_with(s, text, &en());
+        }
+
+        /// Types `text` with the key positions of `table`.
+        fn type_with(s: &mut Session, text: &str, table: &LayoutTable) {
+            for c in text.chars() {
+                let pos = table.position_of(c).unwrap();
+                let mods = if pos.shift { SHIFT } else { Modifiers::NONE };
+                let key = Keystroke {
+                    vk: 0x41, // any letter: the session only classifies it
+                    scan: pos.scan,
+                    extended: false,
+                    shift: pos.shift,
+                };
+                assert_eq!(s.handle(InputEvent::KeyDown { key, mods, time: 0 }), None);
+            }
+        }
+
+        fn space() -> InputEvent {
+            InputEvent::KeyDown {
+                key: Keystroke {
+                    vk: vk::SPACE,
+                    scan: 0x39,
+                    extended: false,
+                    shift: false,
+                },
+                mods: Modifiers::NONE,
+                time: 0,
+            }
+        }
+
+        fn tables() -> Vec<(LayoutId, LayoutTable)> {
+            vec![
+                (id("en-US"), en()),
+                (id("ru-RU"), ru()),
+                (id("uk-UA"), uk()),
+            ]
+        }
     }
 
     mod double_right_shift {

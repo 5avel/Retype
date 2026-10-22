@@ -29,6 +29,12 @@ toggle_pause      = "Ctrl+Pause"
 # shortcut in Settings > Accessibility > Keyboard > Sticky keys.
 double_right_shift = true
 
+# Convert words typed in the wrong layout automatically, after Space.
+# Press the convert-word hotkey right after a correction to undo it; that
+# word is then left alone until retype exits. Off by default.
+[autoswitch]
+enabled = false
+
 # Processes where retype does nothing (case-insensitive exe names).
 [exclusions]
 processes = ["KeePassXC.exe", "mstsc.exe"]

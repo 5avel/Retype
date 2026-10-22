@@ -9,7 +9,8 @@ use std::time::{Duration, Instant, SystemTime};
 
 use retype_core::event::{InputEvent, Millis};
 use retype_core::indicator::Indicator;
-use retype_core::keystroke::{Keystroke, Modifiers};
+use retype_core::inject::wipe_actions;
+use retype_core::keystroke::{Keystroke, Modifiers, vk};
 use retype_core::layout::LayoutId;
 use retype_core::load::{LoadTrigger, load_config};
 use retype_core::plan::{ConversionPlan, PlanOp, Scope};
@@ -17,7 +18,8 @@ use retype_core::selection::convert_selection;
 use retype_core::session::{Command, Session};
 
 use super::executor::Executor;
-use super::hook::{self, EXCLUDED, OVERFLOW, PAUSED, reconcile_modifiers};
+use super::hook::{self, EXCLUDED, HOLD_ARMED, OVERFLOW, PAUSED, reconcile_modifiers};
+use super::input::send_input_keys;
 use super::owner::OwnerWindow;
 use super::process::foreground_exe_path;
 use super::read_config_file;
@@ -36,6 +38,10 @@ const PUMP_INTERVAL: Duration = Duration::from_millis(50);
 /// How often the foreground layout is read for the tray indicator: the
 /// user's own switches (Alt+Shift, Win+Space) send no event we can hook.
 const INDICATOR_POLL: Duration = Duration::from_millis(200);
+
+/// Held keys are released after this long even if the Space that started
+/// holding never reached the worker (queue overflow).
+const MAX_HOLD: Millis = 500;
 
 /// How often the config file's modification time is checked (SPEC 5.5).
 const CONFIG_POLL: Duration = Duration::from_secs(2);
@@ -137,6 +143,10 @@ impl Worker {
             if let Some(owner) = &owner {
                 owner.pump();
             }
+            if hook::hold_age().is_some_and(|age| age >= MAX_HOLD) {
+                log::warn!("held keys released by timeout");
+                release_held_keys();
+            }
             if last_indicator.elapsed() >= INDICATOR_POLL {
                 last_indicator = Instant::now();
                 self.update_indicator();
@@ -175,7 +185,13 @@ impl Worker {
             if let Some(command) = self.session.handle(event) {
                 self.execute(command, owner.as_ref());
             }
+            // The hook held what was typed after this Space until the
+            // autoswitch decision above; let it through now.
+            if matches!(event, InputEvent::KeyDown { key, .. } if key.vk == vk::SPACE) {
+                release_held_keys();
+            }
         }
+        release_held_keys();
         drop(owner);
         log::info!("worker stopped");
     }
@@ -199,10 +215,12 @@ impl Worker {
         match command {
             Command::PauseChanged { paused } => {
                 PAUSED.store(paused, Ordering::Relaxed);
+                self.update_hold_armed();
                 self.update_indicator();
                 log::info!("{}", if paused { "paused" } else { "resumed" });
             }
             Command::Convert(scope) => self.convert(scope),
+            Command::AutoSwitch => self.autoswitch(),
             Command::ConvertSelection => match owner {
                 Some(owner) => self.convert_selection(owner),
                 None => log::warn!("convert selection: no clipboard owner window"),
@@ -224,6 +242,27 @@ impl Worker {
             Ok(()) => log::info!("converted {scope:?}, {} keys", replayed_keys(&plan)),
             Err(err) => {
                 log::warn!("convert {scope:?} not run: {err}");
+                self.session.clear();
+            }
+        }
+    }
+
+    /// Fixes the word just finished if it was typed in the wrong layout.
+    /// Logs counts only, never content (P4).
+    fn autoswitch(&mut self) {
+        let Some(current) = self.executor.foreground_layout() else {
+            return;
+        };
+        let Some(plan) = self
+            .session
+            .plan_autoswitch(&current, &self.executor.tables)
+        else {
+            return;
+        };
+        match self.executor.run(&plan) {
+            Ok(()) => log::info!("autoswitched a word, {} keys", replayed_keys(&plan)),
+            Err(err) => {
+                log::warn!("autoswitch not run: {err}");
                 self.session.clear();
             }
         }
@@ -275,6 +314,14 @@ impl Worker {
         }
         self.session.set_excluded(excluded);
         EXCLUDED.store(excluded, Ordering::Relaxed);
+        self.update_hold_armed();
+    }
+
+    /// Lets the hook hold keys after Space only while autoswitch may act.
+    fn update_hold_armed(&self) {
+        let session = &self.session;
+        let armed = session.config().autoswitch && !session.is_paused() && !session.is_excluded();
+        HOLD_ARMED.store(armed, Ordering::Relaxed);
     }
 
     fn reload_config_if_changed(&mut self) {
@@ -302,6 +349,19 @@ impl Worker {
         self.update_indicator();
         log::info!("config reloaded");
     }
+}
+
+/// Replays the keys the hook held after a Space, in order (they are
+/// injected, so the hook does not record them twice).
+fn release_held_keys() {
+    let mut held = hook::release_held();
+    if held.is_empty() {
+        return;
+    }
+    if let Err(err) = send_input_keys(&held) {
+        log::warn!("held keys not all replayed: {err}");
+    }
+    wipe_actions(&mut held);
 }
 
 fn modified(paths: &Paths) -> Option<SystemTime> {

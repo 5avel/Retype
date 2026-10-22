@@ -73,6 +73,13 @@ impl KeyBuffer {
         }
     }
 
+    /// True if the last recorded key types a letter (a word is in progress).
+    pub fn ends_with_printable(&self) -> bool {
+        self.keys
+            .back()
+            .is_some_and(|k| classify(k.vk) == KeyClass::Printable)
+    }
+
     /// The whole line.
     pub fn line(&self) -> Vec<Keystroke> {
         self.keys.iter().copied().collect()

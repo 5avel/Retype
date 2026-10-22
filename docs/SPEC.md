@@ -24,8 +24,9 @@ translate, sync) the user does not want near a keyboard hook.
 
 ## 3. Non-goals (v1)
 
-- Automatic detection/correction while typing (autoswitch). Planned later,
-  behind a config flag, off by default.
+- Automatic detection/correction while typing is **not on by default**: it
+  exists (`[autoswitch] enabled`, ADR-015) and is off unless the user turns
+  it on.
 - Spell checking, translation, snippets, clipboard history, "diary".
 - Any network feature, including update checks.
 - Linux/macOS support (core stays portable so it remains possible).
@@ -34,15 +35,15 @@ translate, sync) the user does not want near a keyboard hook.
 
 ## 4. Privacy and security requirements (hard)
 
-| ID  | Requirement                                                                 |
-|-----|-----------------------------------------------------------------------------|
-| P1  | The binary contains no networking code and links no networking crates.     |
-| P2  | Typed text exists only in memory, in a bounded buffer (≤ 1 line, ≤ 512 keys). |
-| P3  | The buffer is cleared on Enter, focus change, mouse click, Ctrl/Alt/Win combos, idle timeout. |
-| P4  | Key content is never logged at any level in release builds; logs contain only event kinds and counts. |
-| P5  | No auto-update, no telemetry, no crash upload. Logs stay local.            |
-| P6  | Clipboard used for selection conversion is restored afterwards.            |
-| P7  | No code injection into other processes (no global DLL hooks).              |
+| ID | Requirement                                                                                                                  |
+|----|------------------------------------------------------------------------------------------------------------------------------|
+| P1 | The binary contains no networking code and links no networking crates.                                                       |
+| P2 | Typed text exists only in memory, in a bounded buffer (≤ 1 line, ≤ 512 keys); autoswitch keeps ≤ 128 hashes of undone words. |
+| P3 | The buffer is cleared on Enter, focus change, mouse click, Ctrl/Alt/Win combos, idle timeout.                                |
+| P4 | Key content is never logged at any level in release builds; logs contain only event kinds and counts.                        |
+| P5 | No auto-update, no telemetry, no crash upload. Logs stay local.                                                              |
+| P6 | Clipboard used for selection conversion is restored afterwards.                                                              |
+| P7 | No code injection into other processes (no global DLL hooks).                                                                |
 
 ## 5. Functional behaviour
 
