@@ -37,13 +37,15 @@ Windows behaviour, an entry in `docs/manual-test-log.md`.
 
 - [x] Clipboard save/restore with retries and sequence-number wait
 - [x] Build `LayoutTable` via `ToUnicodeEx` (no state change flag)
-- [ ] Manual test matrix
+- [x] Manual test matrix
 
 ## M5 — Polish
 
-- [ ] Excluded processes list
-- [ ] Opt-in autostart (HKCU Run)
-- [ ] Config reload, layout indicator (optional)
+- [x] Excluded processes list
+- [x] Opt-in autostart (HKCU Run)
+- [x] Config reload (tray command and file change)
+- [ ] Layout indicator in the tray (optional)
+- [ ] Manual test (`docs/manual-tests/M5.md`)
 
 ## M6 — Release 1.0
 

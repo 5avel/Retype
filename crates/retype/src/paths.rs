@@ -65,6 +65,26 @@ impl Paths {
     }
 }
 
+/// The HKCU `Run` value that starts `exe` at logon: the quoted path.
+pub fn autostart_command(exe: &Path) -> String {
+    format!("\"{}\"", exe.display())
+}
+
+/// The exe an existing `Run` value starts (quotes and spaces stripped).
+pub fn autostart_target(current: &str) -> PathBuf {
+    PathBuf::from(current.trim().trim_matches('"'))
+}
+
+/// True if an existing `Run` value should be pointed at `exe`: it names
+/// another path (Windows paths ignore case) and that file is gone, i.e. the
+/// exe was moved. Running another copy (a debug build, a download) leaves a
+/// working autostart alone.
+pub fn autostart_needs_update(current: &str, exe: &Path, target_exists: bool) -> bool {
+    let target = autostart_target(current).to_string_lossy().to_lowercase();
+    let exe = exe.to_string_lossy().to_lowercase();
+    target != exe && !target_exists
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -100,5 +120,26 @@ mod tests {
         assert_eq!(paths.log_dir, Path::new("/app"));
         let paths = Paths::resolve(None, false, None, None);
         assert_eq!(paths.config_file, Path::new("./config.toml"));
+    }
+
+    #[test]
+    fn autostart_command_is_quoted() {
+        let exe = Path::new(r"C:\Tools\re type\retype.exe");
+        let command = autostart_command(exe);
+        assert_eq!(command, r#""C:\Tools\re type\retype.exe""#);
+        assert_eq!(autostart_target(&command), exe);
+    }
+
+    #[test]
+    fn autostart_is_rewritten_only_for_a_moved_exe() {
+        let exe = Path::new(r"C:\Пользователи\Ann\retype.exe");
+        let same = r#" "c:\пользователи\ANN\retype.exe" "#;
+        assert!(!autostart_needs_update(same, exe, false));
+        let other = r#""D:\old\retype.exe""#;
+        assert!(autostart_needs_update(other, exe, false), "old exe gone");
+        assert!(
+            !autostart_needs_update(other, exe, true),
+            "other copy works"
+        );
     }
 }

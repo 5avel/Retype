@@ -63,11 +63,16 @@ impl Executor {
         };
         executor.refresh();
         log::info!("{} keyboard layouts installed", executor.layouts.len());
-        let installed: Vec<LayoutId> = executor.tables.iter().map(|(id, _)| id.clone()).collect();
+        executor.warn_missing(configured);
+        executor
+    }
+
+    /// Logs configured layouts that are not installed (tags only).
+    pub fn warn_missing(&self, configured: &[LayoutId]) {
+        let installed: Vec<LayoutId> = self.tables.iter().map(|(id, _)| id.clone()).collect();
         for id in missing_layouts(configured, &installed) {
             log::warn!("configured layout {id} is not installed");
         }
-        executor
     }
 
     /// The foreground window's layout as the core sees it.

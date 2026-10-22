@@ -14,14 +14,15 @@ use windows::Win32::UI::Shell::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow,
-    DispatchMessageW, GetCursorPos, GetMessageW, IDI_APPLICATION, LoadIconW, MF_SEPARATOR,
-    MF_STRING, MSG, PostMessageW, PostQuitMessage, RegisterClassW, RegisterWindowMessageW,
-    SW_SHOWNORMAL, SetForegroundWindow, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu,
-    TranslateMessage, WINDOW_EX_STYLE, WM_APP, WM_DESTROY, WM_ENDSESSION, WM_LBUTTONUP, WM_NULL,
-    WM_RBUTTONUP, WNDCLASSW, WS_OVERLAPPED,
+    DispatchMessageW, GetCursorPos, GetMessageW, IDI_APPLICATION, LoadIconW, MF_CHECKED,
+    MF_SEPARATOR, MF_STRING, MSG, PostMessageW, PostQuitMessage, RegisterClassW,
+    RegisterWindowMessageW, SW_SHOWNORMAL, SetForegroundWindow, TPM_RETURNCMD, TPM_RIGHTBUTTON,
+    TrackPopupMenu, TranslateMessage, WINDOW_EX_STYLE, WM_APP, WM_DESTROY, WM_ENDSESSION,
+    WM_LBUTTONUP, WM_NULL, WM_RBUTTONUP, WNDCLASSW, WS_OVERLAPPED,
 };
 use windows::core::{HSTRING, PCWSTR, w};
 
+use super::autostart;
 use super::hook::PAUSED;
 use super::worker::WorkerMsg;
 use crate::paths::Paths;
@@ -36,6 +37,8 @@ const ID_PAUSE: usize = 1;
 const ID_OPEN_CONFIG: usize = 2;
 const ID_OPEN_LOGS: usize = 3;
 const ID_EXIT: usize = 4;
+const ID_RELOAD: usize = 5;
+const ID_AUTOSTART: usize = 6;
 
 /// Written when the user opens a config file that does not exist yet.
 const EXAMPLE_CONFIG: &str = include_str!("../../../../config.example.toml");
@@ -236,10 +239,17 @@ fn show_menu(hwnd: HWND) {
     } else {
         w!("Pause")
     };
+    let autostart_flags = if autostart::is_enabled() {
+        MF_STRING | MF_CHECKED
+    } else {
+        MF_STRING
+    };
     let items = [
         (MF_STRING, ID_PAUSE, pause_label),
         (MF_STRING, ID_OPEN_CONFIG, w!("Open config")),
+        (MF_STRING, ID_RELOAD, w!("Reload config")),
         (MF_STRING, ID_OPEN_LOGS, w!("Open log folder")),
+        (autostart_flags, ID_AUTOSTART, w!("Start with Windows")),
         (MF_SEPARATOR, 0, PCWSTR::null()),
         (MF_STRING, ID_EXIT, w!("Exit")),
     ];
@@ -288,6 +298,20 @@ fn show_menu(hwnd: HWND) {
             }
         }
         ID_OPEN_CONFIG => open_config(),
+        ID_RELOAD => {
+            if let Some(context) = CONTEXT.get()
+                && context.worker.try_send(WorkerMsg::ReloadConfig).is_err()
+            {
+                log::warn!("reload request dropped: worker busy");
+            }
+        }
+        ID_AUTOSTART => {
+            let enable = !autostart::is_enabled();
+            match autostart::set_enabled(enable) {
+                Ok(()) => log::info!("autostart {}", if enable { "on" } else { "off" }),
+                Err(err) => log::error!("autostart change failed: {err}"),
+            }
+        }
         ID_OPEN_LOGS => {
             if let Some(context) = CONTEXT.get() {
                 let _ = fs::create_dir_all(&context.paths.log_dir);

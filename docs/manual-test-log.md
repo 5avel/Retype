@@ -13,3 +13,4 @@ generates a checklist; results are appended here.
 | 2026-10-21 | local (M2)     | Log has no key content                | —       | ok     | checked by Claude |
 | 2026-10-22 | local (M3)     | Convert last word / line (M3.md)      | —       | ok     | user: all works; build before review fixes (modifier restore) |
 | 2026-10-22 | local (M3)     | Convert selection hotkey              | —       | n/a    | not implemented until M4 (logs only) |
+| 2026-10-22 | 5cd41bb        | Convert selection (M4.md)             | —       | ok     | user: works |

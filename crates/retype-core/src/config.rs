@@ -69,6 +69,13 @@ impl Config {
         let exe_name = exe_name.to_lowercase();
         self.excluded_processes.contains(&exe_name)
     }
+
+    /// Like [`Config::is_excluded`], for a full executable path such as
+    /// `C:\Program Files\KeePassXC\KeePassXC.exe`.
+    pub fn is_excluded_path(&self, exe_path: &str) -> bool {
+        let name = exe_path.rsplit(['\\', '/']).next().unwrap_or(exe_path);
+        self.is_excluded(name)
+    }
 }
 
 /// Why a config was rejected. Messages name the offending key.
@@ -265,6 +272,10 @@ mod tests {
         assert!(config.is_excluded("keepassxc.EXE"));
         assert!(config.is_excluded("MSTSC.exe"));
         assert!(!config.is_excluded("notepad.exe"));
+        assert!(config.is_excluded_path(r"C:\Program Files\KeePassXC\KeePassXC.exe"));
+        assert!(config.is_excluded_path("mstsc.exe"));
+        assert!(!config.is_excluded_path(r"C:\mstsc.exe\notepad.exe"));
+        assert!(!config.is_excluded_path(""));
         assert_eq!(config.log_level, LogLevel::Info);
     }
 

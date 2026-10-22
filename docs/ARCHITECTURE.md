@@ -49,6 +49,7 @@ Why: Windows silently removes a low-level hook whose callback is slow
 | `Config`              | `config`    | Parsed TOML with defaults and validation               |
 | `Step`, `KeyAction`   | `inject`    | Plan → exact key events, layout switches and waits     |
 | `SelectionConversion` | `selection` | Source/target layout and text for selection conversion |
+| `load_config`         | `load`      | Which config to apply at startup and on reload         |
 
 The app supplies `LayoutTable`s (built with `ToUnicodeEx`) and executes plans;
 the core never calls the OS, which keeps it deterministic and unit-testable.
@@ -64,6 +65,8 @@ the core never calls the OS, which keeps it deterministic and unit-testable.
 | `clipboard`  | Snapshot/restore clipboard, read/write text, privacy markers       |
 | `selection`  | Selection flow: copy, convert (core), paste, restore               |
 | `owner`      | Message-only clipboard owner window on the worker thread           |
+| `process`    | Foreground process exe path (for `exclusions.processes`)           |
+| `autostart`  | HKCU `Run` value: read, set, delete, fix a moved exe path          |
 | `tray`       | `Shell_NotifyIconW`, menu, commands to main loop                   |
 | `instance`   | Named mutex for single instance                                    |
 | `worker`     | Worker thread: runs `core::Session`, executes commands             |

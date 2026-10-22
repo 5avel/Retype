@@ -148,3 +148,29 @@ Newest at the bottom. Format: context → decision → consequences. Use `/adr`.
   `Win32_System_Memory` (no new crate). Mixed-script selections convert only
   the characters of the detected source layout. Apps that copy the whole line
   when nothing is selected (VS Code) get that line converted and pasted.
+
+## ADR-012 — Exclusions, autostart and config reload (M5)
+
+- Context: ROADMAP M5 and SPEC 5.5 leave the exact behaviour open.
+- Decision:
+  - Exclusions: on every focus change the worker reads the foreground
+    process's exe path (`QueryFullProcessImageNameW`) and matches its file
+    name against `exclusions.processes`. In an excluded app nothing is
+    recorded and retype's hotkeys reach the app untouched; only pause/resume
+    stays global. A process that cannot be queried is not excluded. Process
+    names are never logged.
+  - Autostart: a "Start with Windows" checkbox in the tray menu; the value
+    `retype` under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` is the
+    only state (no config key, so the two cannot disagree). If it exists at
+    startup but its exe is gone (moved), it is rewritten to the running exe;
+    running another copy (debug build, download) leaves it alone.
+  - Config reload: from the tray ("Reload config") and when the file's
+    modification time changes (polled every 2 s; no file watcher thread). A
+    broken or unreadable file is logged and the running config stays. A
+    missing file means defaults at startup and on the tray command, but not
+    when it just vanished (editors save by delete + rename). The policy is
+    `retype_core::load`. Hotkeys in the hook are replaced under a mutex
+    the callback only `try_lock`s, so it never blocks.
+  - The tray layout indicator is deferred (optional in the roadmap).
+- Consequences: new `windows` feature `Win32_System_Registry` (no new crate).
+  Fullscreen games are ignored only if listed in `exclusions.processes`.

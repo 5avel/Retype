@@ -34,6 +34,18 @@ pub enum HotkeyAction {
     TogglePause,
 }
 
+impl HotkeyAction {
+    /// Whether the hook keeps this hotkey's key from the foreground app.
+    /// Pause/resume works everywhere; the other actions pass through to the
+    /// app while retype is paused or the app is excluded.
+    pub fn swallowed(self, paused: bool, excluded: bool) -> bool {
+        match self {
+            Self::TogglePause => true,
+            _ => !paused && !excluded,
+        }
+    }
+}
+
 /// The configured hotkeys (SPEC 5.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HotkeySet {
@@ -181,6 +193,15 @@ fn key_code(name: &str) -> Option<u16> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn swallowing_depends_on_pause_and_exclusion() {
+        let convert = HotkeyAction::ConvertLastWord;
+        assert!(convert.swallowed(false, false));
+        assert!(!convert.swallowed(true, false));
+        assert!(!convert.swallowed(false, true));
+        assert!(HotkeyAction::TogglePause.swallowed(true, true));
+    }
 
     fn mods(shift: bool, ctrl: bool, alt: bool) -> Modifiers {
         Modifiers {

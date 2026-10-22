@@ -73,14 +73,15 @@ translate, sync) the user does not want near a keyboard hook.
 
 ### 5.4 Tray
 
-Tray icon with: current status (active/paused), Pause, Open config, Open log
-folder, Exit. No other UI in v1.
+Tray icon with: current status (active/paused), Pause, Open config, Reload
+config, Open log folder, Start with Windows (checkbox), Exit. No other UI in v1.
 
 ### 5.5 Configuration
 
 TOML file, see `config.example.toml`. Location: next to the exe if
 `portable` file exists there, otherwise `%APPDATA%\retype\config.toml`.
-Reloaded on tray command or file change.
+Reloaded on tray command or file change; a broken file is reported in the
+log and the running config stays.
 
 ## 6. Non-functional requirements
 

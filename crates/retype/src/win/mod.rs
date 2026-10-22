@@ -6,6 +6,7 @@
 
 #![allow(unsafe_code)] // Every block still needs `// SAFETY:` (clippy enforces it).
 
+mod autostart;
 mod clipboard;
 mod executor;
 mod hook;
@@ -13,6 +14,7 @@ mod input;
 mod instance;
 mod layout;
 mod owner;
+mod process;
 mod selection;
 mod tray;
 mod worker;
@@ -27,6 +29,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::{HSTRING, w};
 
 use retype_core::config::Config;
+use retype_core::load::{ConfigFile, LoadTrigger, load_config as load_config_with};
 use retype_core::session::Session;
 
 use crate::logger;
@@ -59,14 +62,15 @@ pub fn run() {
 
     let (tx, rx) = mpsc::sync_channel(CHANNEL_CAPACITY);
     let hotkeys = config.hotkeys;
-    let tray = match tray::Tray::create(tx.clone(), paths) {
+    autostart::refresh_path();
+    let tray = match tray::Tray::create(tx.clone(), paths.clone()) {
         Ok(tray) => tray,
         Err(err) => {
             fatal(&format!("cannot create the tray icon: {err}"));
             return;
         }
     };
-    let worker = match worker::spawn(rx, Session::new(config), tray.handle()) {
+    let worker = match worker::spawn(rx, Session::new(config), tray.handle(), paths) {
         Ok(worker) => worker,
         Err(err) => {
             fatal(&format!("cannot start the worker thread: {err}"));
@@ -109,21 +113,18 @@ fn message_box(text: &str, icon: MESSAGEBOX_STYLE) {
     unsafe { MessageBoxW(None, &text, w!("retype"), MB_OK | icon) };
 }
 
-/// Reads the config file. A missing file means defaults; a broken one means
-/// defaults plus an error to log.
+/// Reads the config at startup (policy: `retype_core::load`).
 fn load_config(paths: &Paths) -> (Config, Option<String>) {
+    let result = load_config_with(read_config_file(paths), LoadTrigger::Startup);
+    let config = result.maybe_config.unwrap_or_default();
+    (config, result.maybe_error)
+}
+
+/// Reads the config file for [`retype_core::load::load_config`].
+pub(crate) fn read_config_file(paths: &Paths) -> ConfigFile {
     match fs::read_to_string(&paths.config_file) {
-        Ok(text) => match Config::from_toml(&text) {
-            Ok(config) => (config, None),
-            Err(err) => (Config::default(), Some(err.to_string())),
-        },
-        Err(err) if err.kind() == ErrorKind::NotFound => (Config::default(), None),
-        Err(err) => (
-            Config::default(),
-            Some(format!(
-                "cannot read {}: {err}",
-                paths.config_file.display()
-            )),
-        ),
+        Ok(text) => ConfigFile::Text(text),
+        Err(err) if err.kind() == ErrorKind::NotFound => ConfigFile::Missing,
+        Err(err) => ConfigFile::Unreadable(err.to_string()),
     }
 }

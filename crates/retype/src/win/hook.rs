@@ -3,9 +3,9 @@
 //! Callbacks only translate and enqueue (ADR-004): they must return within
 //! `LowLevelHooksTimeout` or Windows silently removes the hook.
 
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::mpsc::{self, SyncSender, TrySendError};
+use std::sync::{Mutex, OnceLock, TryLockError};
 use std::thread::{self, JoinHandle};
 
 use windows::Win32::Foundation::{HMODULE, HWND, LPARAM, LRESULT, WPARAM};
@@ -22,7 +22,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WM_XBUTTONDOWN,
 };
 
-use retype_core::hotkey::{HotkeyAction, HotkeySet};
+use retype_core::hotkey::HotkeySet;
 use retype_core::inject::SIDED_MODIFIERS;
 use retype_core::keystroke::{Keystroke, Modifiers};
 
@@ -31,13 +31,28 @@ use super::worker::{HookInput, WorkerMsg};
 /// Shared with the callbacks, which receive no user data pointer.
 struct Shared {
     tx: SyncSender<WorkerMsg>,
-    hotkeys: HotkeySet,
 }
 
 static SHARED: OnceLock<Shared> = OnceLock::new();
 
+/// The hotkeys, replaced on config reload. The callback only `try_lock`s,
+/// so it never blocks; during a replace it simply swallows nothing.
+static HOTKEYS: Mutex<Option<HotkeySet>> = Mutex::new(None);
+
 /// Mirrors the session's pause state so the hook knows which keys to swallow.
 pub static PAUSED: AtomicBool = AtomicBool::new(false);
+
+/// True while the foreground app is in `exclusions.processes`: its keys,
+/// hotkeys included, go to the app untouched (except pause/resume).
+pub static EXCLUDED: AtomicBool = AtomicBool::new(false);
+
+/// Replaces the hotkeys the callback matches (config reload).
+pub fn set_hotkeys(hotkeys: HotkeySet) {
+    match HOTKEYS.lock() {
+        Ok(mut guard) => *guard = Some(hotkeys),
+        Err(poisoned) => *poisoned.into_inner() = Some(hotkeys),
+    }
+}
 
 /// Set when the channel was full and input was dropped; the worker then
 /// clears the buffer because it no longer matches the screen.
@@ -105,9 +120,8 @@ impl HookThread {
 
 /// Starts the hook thread. Fails if the hooks cannot be installed.
 pub fn start(tx: SyncSender<WorkerMsg>, hotkeys: HotkeySet) -> Result<HookThread, String> {
-    // Config reload (ROADMAP M5) will need this to become updatable.
-    let shared = Shared { tx, hotkeys };
-    if SHARED.set(shared).is_err() {
+    set_hotkeys(hotkeys);
+    if SHARED.set(Shared { tx }).is_err() {
         return Err("hook already started".to_owned());
     }
     let (ready_tx, ready_rx) = mpsc::channel();
@@ -272,14 +286,19 @@ fn on_key(message: u32, info: &KBDLLHOOKSTRUCT) -> bool {
     };
     send(HookInput::Key { key, mods });
 
-    let Some(shared) = SHARED.get() else {
-        return false;
+    let guard = match HOTKEYS.try_lock() {
+        Ok(guard) => guard,
+        Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+        Err(TryLockError::WouldBlock) => return false,
     };
-    match shared.hotkeys.action_for(key.vk, mods) {
-        Some(HotkeyAction::TogglePause) => true,
-        Some(_) => !PAUSED.load(Ordering::Relaxed),
-        None => false,
-    }
+    let maybe_action = guard.and_then(|hotkeys| hotkeys.action_for(key.vk, mods));
+    drop(guard);
+    maybe_action.is_some_and(|action| {
+        action.swallowed(
+            PAUSED.load(Ordering::Relaxed),
+            EXCLUDED.load(Ordering::Relaxed),
+        )
+    })
 }
 
 fn track_modifier(vk_code: u32, is_up: bool) {

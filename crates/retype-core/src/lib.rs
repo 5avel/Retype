@@ -13,6 +13,7 @@ pub mod hotkey;
 pub mod inject;
 pub mod keystroke;
 pub mod layout;
+pub mod load;
 pub mod plan;
 pub mod selection;
 pub mod session;

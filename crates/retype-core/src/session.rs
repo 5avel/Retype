@@ -26,6 +26,8 @@ pub struct Session {
     buffer: KeyBuffer,
     last_key: Option<Millis>,
     paused: bool,
+    /// The foreground app is in `exclusions.processes`.
+    excluded: bool,
     /// Hotkey key (and modifiers) that is down; its auto-repeat must not
     /// fire again.
     maybe_held_hotkey: Option<(u16, Modifiers)>,
@@ -38,6 +40,7 @@ impl Session {
             buffer: KeyBuffer::new(),
             last_key: None,
             paused: false,
+            excluded: false,
             maybe_held_hotkey: None,
         }
     }
@@ -92,7 +95,7 @@ impl Session {
                     // A lost key-up must not swallow the next real press.
                     self.maybe_held_hotkey = None;
                 }
-                if self.paused {
+                if self.paused || self.excluded {
                     return None;
                 }
                 if self.is_idle(time) {
@@ -115,7 +118,7 @@ impl Session {
     /// window's current layout, and updates the buffer to what will be on
     /// screen afterwards so that pressing the hotkey again converts back.
     pub fn plan(&mut self, scope: Scope, current: &LayoutId) -> Option<ConversionPlan> {
-        if self.paused {
+        if self.paused || self.excluded {
             return None;
         }
         let target = maybe_target_layout(&self.config.layouts, current, self.config.mode)?;
@@ -140,6 +143,19 @@ impl Session {
         maybe_target_layout(&self.config.layouts, current, self.config.mode).cloned()
     }
 
+    /// Tells the session whether the foreground app is excluded. Nothing is
+    /// recorded there and only the pause hotkey works.
+    pub fn set_excluded(&mut self, excluded: bool) {
+        if excluded != self.excluded {
+            self.excluded = excluded;
+            self.reset();
+        }
+    }
+
+    pub fn is_excluded(&self) -> bool {
+        self.excluded
+    }
+
     /// Pauses or resumes, e.g. from the tray menu. The buffer is cleared.
     pub fn toggle_pause(&mut self) -> Command {
         self.paused = !self.paused;
@@ -152,7 +168,7 @@ impl Session {
     fn on_hotkey(&mut self, action: HotkeyAction) -> Option<Command> {
         match action {
             HotkeyAction::TogglePause => Some(self.toggle_pause()),
-            _ if self.paused => None,
+            _ if self.paused || self.excluded => None,
             HotkeyAction::ConvertLastWord => Some(Command::Convert(Scope::LastWord)),
             HotkeyAction::ConvertLastLine => Some(Command::Convert(Scope::LastLine)),
             HotkeyAction::ConvertSelection => {
@@ -395,6 +411,37 @@ mod tests {
         let mut s = Session::new(Config::default());
         type_text(&mut s, "abc");
         s.handle(down(vk::PAUSE, Modifiers::NONE, 0));
+        assert_eq!(s.buffered_keys(), 3);
+    }
+
+    #[test]
+    fn excluded_app_records_nothing_and_ignores_hotkeys() {
+        let mut s = Session::new(Config::default());
+        type_text(&mut s, "abc");
+        s.set_excluded(true);
+        assert_eq!(s.buffered_keys(), 0);
+        type_text(&mut s, "abc");
+        assert_eq!(s.buffered_keys(), 0);
+        assert_eq!(s.handle(down(vk::PAUSE, Modifiers::NONE, 0)), None);
+        assert_eq!(s.handle(down(vk::SCROLL, Modifiers::NONE, 0)), None);
+        assert_eq!(s.plan(Scope::LastWord, &id("en-US")), None);
+        assert_eq!(
+            s.handle(down(vk::CANCEL, CTRL, 0)),
+            Some(Command::PauseChanged { paused: true }),
+            "pause stays global"
+        );
+        s.toggle_pause();
+        s.set_excluded(false);
+        type_text(&mut s, "ab");
+        assert_eq!(s.buffered_keys(), 2);
+    }
+
+    #[test]
+    fn repeated_exclusion_state_keeps_the_buffer() {
+        // The worker reports the state on every focus event.
+        let mut s = Session::new(Config::default());
+        type_text(&mut s, "abc");
+        s.set_excluded(false);
         assert_eq!(s.buffered_keys(), 3);
     }
 
