@@ -1,10 +1,11 @@
 //! Tray icon, its menu and the main thread's message loop (SPEC 5.4).
 
+use std::cell::RefCell;
 use std::fs;
 use std::path::Path;
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::SyncSender;
+use std::sync::{Mutex, OnceLock};
 
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -14,24 +15,30 @@ use windows::Win32::UI::Shell::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow,
-    DispatchMessageW, GetCursorPos, GetMessageW, IDI_APPLICATION, LoadIconW, MF_CHECKED,
-    MF_SEPARATOR, MF_STRING, MSG, PostMessageW, PostQuitMessage, RegisterClassW,
-    RegisterWindowMessageW, SW_SHOWNORMAL, SetForegroundWindow, TPM_RETURNCMD, TPM_RIGHTBUTTON,
-    TrackPopupMenu, TranslateMessage, WINDOW_EX_STYLE, WM_APP, WM_DESTROY, WM_ENDSESSION,
-    WM_LBUTTONUP, WM_NULL, WM_RBUTTONUP, WNDCLASSW, WS_OVERLAPPED,
+    DispatchMessageW, GetCursorPos, GetMessageW, GetSystemMetrics, HICON, IDI_APPLICATION,
+    IMAGE_ICON, LR_SHARED, LoadIconW, LoadImageW, MF_CHECKED, MF_SEPARATOR, MF_STRING, MSG,
+    PostMessageW, PostQuitMessage, RegisterClassW, RegisterWindowMessageW, SM_CXSMICON,
+    SW_SHOWNORMAL, SetForegroundWindow, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu,
+    TranslateMessage, WINDOW_EX_STYLE, WM_APP, WM_DESTROY, WM_ENDSESSION, WM_LBUTTONUP, WM_NULL,
+    WM_RBUTTONUP, WNDCLASSW, WS_OVERLAPPED,
 };
 use windows::core::{HSTRING, PCWSTR, w};
 
 use super::autostart;
 use super::hook::PAUSED;
+use super::icon::{self, OwnedIcon};
 use super::worker::WorkerMsg;
+use retype_core::indicator::Indicator;
+
 use crate::paths::Paths;
 
 /// The shell sends icon clicks to the window with this message.
 const WM_APP_TRAY: u32 = WM_APP + 1;
-/// The worker posts this when pause state changes; wparam = paused.
-const WM_APP_PAUSED: u32 = WM_APP + 2;
+/// The worker posts this when the indicator (layout, pause) changes.
+const WM_APP_INDICATOR: u32 = WM_APP + 2;
 const ICON_ID: u32 = 1;
+/// Resource id of the app icon written by `build.rs`.
+const APP_ICON_ID: usize = 1;
 
 const ID_PAUSE: usize = 1;
 const ID_OPEN_CONFIG: usize = 2;
@@ -49,6 +56,14 @@ struct Context {
 }
 
 static CONTEXT: OnceLock<Context> = OnceLock::new();
+
+/// Handed from the worker to the main thread with `WM_APP_INDICATOR`.
+static PENDING_INDICATOR: Mutex<Option<Indicator>> = Mutex::new(None);
+
+thread_local! {
+    /// The indicator shown now and its icon (main thread only).
+    static CURRENT: RefCell<Option<(Indicator, OwnedIcon)>> = const { RefCell::new(None) };
+}
 /// "TaskbarCreated": Explorer restarted, the icon must be added again.
 static TASKBAR_CREATED: AtomicU32 = AtomicU32::new(0);
 
@@ -58,17 +73,15 @@ static TASKBAR_CREATED: AtomicU32 = AtomicU32::new(0);
 pub struct TrayHandle(isize);
 
 impl TrayHandle {
-    pub fn notify_paused(self, paused: bool) {
+    /// Shows `indicator` in the tray (drawn on the main thread).
+    pub fn notify_indicator(self, indicator: Indicator) {
+        match PENDING_INDICATOR.lock() {
+            Ok(mut pending) => *pending = Some(indicator),
+            Err(poisoned) => *poisoned.into_inner() = Some(indicator),
+        }
         let hwnd = HWND(self.0 as *mut _);
         // SAFETY: PostMessageW is thread-safe; a stale handle just fails.
-        let posted = unsafe {
-            PostMessageW(
-                Some(hwnd),
-                WM_APP_PAUSED,
-                WPARAM(usize::from(paused)),
-                LPARAM(0),
-            )
-        };
+        let posted = unsafe { PostMessageW(Some(hwnd), WM_APP_INDICATOR, WPARAM(0), LPARAM(0)) };
         if let Err(err) = posted {
             log::warn!("tray update failed: {err}");
         }
@@ -155,13 +168,33 @@ impl Drop for Tray {
     }
 }
 
-fn set_icon(hwnd: HWND, action: NOTIFY_ICON_MESSAGE) -> bool {
-    let paused = PAUSED.load(Ordering::Relaxed);
-    let tip = if paused {
-        "retype — paused"
-    } else {
-        "retype"
+fn show_pending_indicator(hwnd: HWND) {
+    let maybe_indicator = match PENDING_INDICATOR.lock() {
+        Ok(mut pending) => pending.take(),
+        Err(poisoned) => poisoned.into_inner().take(),
     };
+    let Some(indicator) = maybe_indicator else {
+        return;
+    };
+    match icon::render(&indicator) {
+        Ok(drawn) => {
+            let previous = CURRENT.with(|current| current.borrow_mut().replace((indicator, drawn)));
+            if !set_icon(hwnd, NIM_MODIFY) {
+                log::warn!("tray indicator update failed");
+            }
+            drop(previous); // destroyed only once the shell shows the new icon
+        }
+        Err(err) => log::warn!("tray indicator not drawn: {err}"),
+    }
+}
+
+/// Adds or updates the icon: the layout indicator once the worker sent one,
+/// the app icon before that.
+fn set_icon(hwnd: HWND, action: NOTIFY_ICON_MESSAGE) -> bool {
+    let (maybe_icon, tip) = CURRENT.with(|current| match current.borrow().as_ref() {
+        Some((indicator, drawn)) => (Some(drawn.handle()), indicator.tooltip()),
+        None => (None, "retype".to_owned()),
+    });
     let mut data = NOTIFYICONDATAW {
         cbSize: u32::try_from(size_of::<NOTIFYICONDATAW>()).unwrap_or(0),
         hWnd: hwnd,
@@ -170,15 +203,46 @@ fn set_icon(hwnd: HWND, action: NOTIFY_ICON_MESSAGE) -> bool {
         uCallbackMessage: WM_APP_TRAY,
         ..Default::default()
     };
-    // SAFETY: loads a shared system icon; no ownership is taken.
-    if let Ok(icon) = unsafe { LoadIconW(None, IDI_APPLICATION) } {
-        data.hIcon = icon;
+    match maybe_icon {
+        Some(drawn) => data.hIcon = drawn,
+        None => {
+            if let Some(app_icon) = app_icon() {
+                data.hIcon = app_icon;
+            }
+        }
     }
     for (dst, src) in data.szTip.iter_mut().zip(tip.encode_utf16()) {
-        *dst = src; // szTip stays NUL-terminated: the tip is far below 128
+        *dst = src; // szTip stays NUL-terminated: the tip is far below 128 units
     }
     // SAFETY: `data` is fully initialised and outlives the call.
     unsafe { Shell_NotifyIconW(action, &data) }.as_bool()
+}
+
+/// The icon embedded by `build.rs` (resource id 1), or the generic
+/// application icon in builds without it.
+fn app_icon() -> Option<HICON> {
+    // SAFETY: NULL name returns this exe's module handle; no ownership.
+    let module = unsafe { GetModuleHandleW(None) }.ok()?;
+    // SAFETY: no preconditions.
+    let size = unsafe { GetSystemMetrics(SM_CXSMICON) };
+    // SAFETY: MAKEINTRESOURCE(1): an integer id in place of a name. The
+    // small-icon size picks the 16/20/24 px image; LR_SHARED icons are owned
+    // by the system and never destroyed by us.
+    let loaded = unsafe {
+        LoadImageW(
+            Some(module.into()),
+            PCWSTR(std::ptr::without_provenance(APP_ICON_ID)),
+            IMAGE_ICON,
+            size,
+            size,
+            LR_SHARED,
+        )
+    };
+    if let Ok(handle) = loaded {
+        return Some(HICON(handle.0));
+    }
+    // SAFETY: loads a shared system icon; no ownership is taken.
+    unsafe { LoadIconW(None, IDI_APPLICATION) }.ok()
 }
 
 fn remove_icon(hwnd: HWND) {
@@ -204,8 +268,8 @@ extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
             }
             LRESULT(0)
         }
-        WM_APP_PAUSED => {
-            set_icon(hwnd, NIM_MODIFY);
+        WM_APP_INDICATOR => {
+            show_pending_indicator(hwnd);
             LRESULT(0)
         }
         WM_ENDSESSION => {

@@ -10,6 +10,7 @@ mod autostart;
 mod clipboard;
 mod executor;
 mod hook;
+mod icon;
 mod input;
 mod instance;
 mod layout;

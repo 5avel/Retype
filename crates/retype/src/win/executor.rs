@@ -81,6 +81,16 @@ impl Executor {
         self.layout_id_of(hkl)
     }
 
+    /// Like [`Executor::foreground_layout`] but never rebuilds the tables;
+    /// cheap enough to poll for the tray indicator.
+    pub fn foreground_layout_cached(&self) -> Option<LayoutId> {
+        let hkl = Foreground::current()?.hkl;
+        match self.layouts.iter().find(|(_, h)| *h == hkl) {
+            Some((id, _)) => Some(id.clone()),
+            None => hkl.layout_id(),
+        }
+    }
+
     pub(super) fn layout_id_of(&mut self, hkl: Hkl) -> Option<LayoutId> {
         if let Some((id, _)) = self.layouts.iter().find(|(_, h)| *h == hkl) {
             return Some(id.clone());

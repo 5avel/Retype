@@ -17,9 +17,9 @@ pub enum InputEvent {
         mods: Modifiers,
         time: Millis,
     },
-    /// A key was released. Only the virtual key is passed: it is used to tell
-    /// a hotkey's auto-repeat from a second press.
-    KeyUp { vk: u16 },
+    /// A key was released. Only the virtual key is passed: it tells a
+    /// hotkey's auto-repeat from a second press, and ends a double tap.
+    KeyUp { vk: u16, time: Millis },
     /// Any mouse button was pressed: the caret may have moved.
     MouseClick,
     /// The foreground window or its focused control changed.

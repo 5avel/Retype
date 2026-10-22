@@ -48,12 +48,13 @@ translate, sync) the user does not want near a keyboard hook.
 
 ### 5.1 Default hotkeys (configurable)
 
-| Action                   | Default        |
-|--------------------------|----------------|
-| Convert last word        | `Pause`        |
-| Convert last line        | `Shift+Pause`  |
-| Convert selection        | `Scroll Lock`  |
-| Pause/resume retype      | `Ctrl+Pause`   |
+| Action                   | Default                                            |
+|--------------------------|----------------------------------------------------|
+| Convert last word        | `Pause`                                            |
+| Convert last word (alt.) | Double right Shift (`hotkeys.double_right_shift`)  |
+| Convert last line        | `Shift+Pause`                                      |
+| Convert selection        | `Scroll Lock`                                      |
+| Pause/resume retype      | `Ctrl+Pause`                                       |
 
 ### 5.2 Convert last word / line
 
@@ -73,8 +74,11 @@ translate, sync) the user does not want near a keyboard hook.
 
 ### 5.4 Tray
 
-Tray icon with: current status (active/paused), Pause, Open config, Reload
-config, Open log folder, Start with Windows (checkbox), Exit. No other UI in v1.
+The tray icon shows the foreground window's layout as two or three letters
+(`EN`, `RU`) on a colored square, one color per configured layout, grey while
+paused. Menu: Pause, Open config, Reload config, Open log folder, Start with
+Windows (checkbox), Exit. No other UI in v1. The exe carries the app icon
+("re" and a text cursor).
 
 ### 5.5 Configuration
 

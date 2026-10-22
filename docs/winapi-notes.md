@@ -99,6 +99,18 @@ Living document: add an entry whenever Windows behaviour surprises us.
 - `NIM_DELETE` on `WM_DESTROY` and `WM_ENDSESSION`, otherwise a ghost icon
   stays until the mouse passes over it.
 
+## Icons
+
+- GDI text drawn into a 32-bit DIB leaves the alpha byte at 0 where it
+  draws; set alpha yourself after drawing (we apply a rounded-square mask).
+  32-bit icon colors are straight (not premultiplied) alpha.
+- `CreateIconIndirect` copies the bitmaps: delete ours afterwards, and keep
+  the `HICON` alive while the tray shows it (destroy only after replacing).
+- `MAKEINTRESOURCE(id)` in windows-rs: `PCWSTR(std::ptr::without_provenance(id))`.
+- The MSVC linker accepts a compiled `.res` file as a plain input
+  (`cargo:rustc-link-arg-bins=...`); a `.res` starts with an empty 32-byte
+  resource header, and icons are RT_ICON images plus one RT_GROUP_ICON.
+
 ## Antivirus heuristics
 
 Keyboard hook + `SendInput` resembles a keylogger. Unsigned builds may be

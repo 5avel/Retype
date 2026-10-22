@@ -2,9 +2,10 @@
 
 use crate::buffer::KeyBuffer;
 use crate::config::Config;
+use crate::doubletap::DoubleTap;
 use crate::event::{InputEvent, Millis};
 use crate::hotkey::HotkeyAction;
-use crate::keystroke::{KeyClass, Modifiers, classify};
+use crate::keystroke::{KeyClass, Modifiers, classify, vk};
 use crate::layout::{LayoutId, maybe_target_layout};
 use crate::plan::{Conversion, ConversionPlan, PlanOptions, Scope, plan_conversion};
 
@@ -31,6 +32,7 @@ pub struct Session {
     /// Hotkey key (and modifiers) that is down; its auto-repeat must not
     /// fire again.
     maybe_held_hotkey: Option<(u16, Modifiers)>,
+    double_shift: DoubleTap,
 }
 
 impl Session {
@@ -42,6 +44,7 @@ impl Session {
             paused: false,
             excluded: false,
             maybe_held_hotkey: None,
+            double_shift: DoubleTap::new(vk::RSHIFT),
         }
     }
 
@@ -69,13 +72,16 @@ impl Session {
         match event {
             InputEvent::MouseClick | InputEvent::FocusChanged => {
                 self.reset();
+                self.double_shift.reset();
                 None
             }
-            InputEvent::KeyUp { vk } => {
+            InputEvent::KeyUp { vk, time } => {
                 if self.maybe_held_hotkey.is_some_and(|(held, _)| held == vk) {
                     self.maybe_held_hotkey = None;
                 }
-                None
+                let double_tap = self.double_shift.key_up(vk, time);
+                let active = self.config.double_right_shift && !self.paused && !self.excluded;
+                (double_tap && active).then_some(Command::Convert(Scope::LastWord))
             }
             InputEvent::Tick { time } => {
                 if self.is_idle(time) {
@@ -84,6 +90,7 @@ impl Session {
                 None
             }
             InputEvent::KeyDown { key, mods, time } => {
+                self.double_shift.key_down(key.vk, time);
                 if let Some(action) = self.config.hotkeys.action_for(key.vk, mods) {
                     let pressed = (key.vk, mods);
                     if self.maybe_held_hotkey.replace(pressed) == Some(pressed) {
@@ -240,6 +247,10 @@ mod tests {
             };
             assert_eq!(session.handle(down(vk_code, mods, 0)), None);
         }
+    }
+
+    fn up(vk_code: u16, time: Millis) -> InputEvent {
+        InputEvent::KeyUp { vk: vk_code, time }
     }
 
     fn id(tag: &str) -> LayoutId {
@@ -445,6 +456,61 @@ mod tests {
         assert_eq!(s.buffered_keys(), 3);
     }
 
+    mod double_right_shift {
+        use super::*;
+
+        #[test]
+        fn converts_last_word() {
+            let mut s = Session::new(Config::default());
+            type_text(&mut s, "ghbdtn");
+            assert_eq!(tap_rshift(&mut s, 100), None);
+            assert_eq!(
+                tap_rshift(&mut s, 300),
+                Some(Command::Convert(Scope::LastWord))
+            );
+            assert_eq!(s.buffered_keys(), 6, "Shift does not touch the buffer");
+        }
+
+        #[test]
+        fn left_shift_does_not_count() {
+            let mut s = Session::new(Config::default());
+            for start in [100, 300] {
+                s.handle(down(vk::LSHIFT, SHIFT, start));
+                assert_eq!(s.handle(up(vk::LSHIFT, start + 50)), None);
+            }
+        }
+
+        #[test]
+        fn off_paused_or_excluded() {
+            let config = Config {
+                double_right_shift: false,
+                ..Config::default()
+            };
+            let mut off = Session::new(config);
+            let mut paused = Session::new(Config::default());
+            paused.toggle_pause();
+            let mut excluded = Session::new(Config::default());
+            excluded.set_excluded(true);
+            for s in [&mut off, &mut paused, &mut excluded] {
+                tap_rshift(s, 100);
+                assert_eq!(tap_rshift(s, 300), None);
+            }
+        }
+
+        #[test]
+        fn mouse_click_breaks_the_sequence() {
+            let mut s = Session::new(Config::default());
+            tap_rshift(&mut s, 100);
+            s.handle(InputEvent::MouseClick);
+            assert_eq!(tap_rshift(&mut s, 300), None);
+        }
+
+        fn tap_rshift(s: &mut Session, time: Millis) -> Option<Command> {
+            s.handle(down(vk::RSHIFT, SHIFT, time));
+            s.handle(up(vk::RSHIFT, time + 50))
+        }
+    }
+
     #[test]
     fn hotkey_auto_repeat_fires_once() {
         let mut s = Session::new(Config::default());
@@ -453,7 +519,10 @@ mod tests {
         assert_eq!(s.handle(pause), convert);
         assert_eq!(s.handle(pause), None);
         assert_eq!(s.handle(pause), None);
-        s.handle(InputEvent::KeyUp { vk: vk::PAUSE });
+        s.handle(InputEvent::KeyUp {
+            vk: vk::PAUSE,
+            time: 0,
+        });
         assert_eq!(s.handle(pause), convert);
     }
 

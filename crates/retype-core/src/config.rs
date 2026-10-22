@@ -31,6 +31,8 @@ pub struct Config {
     /// 0 disables the idle reset.
     pub idle_reset_seconds: u32,
     pub hotkeys: HotkeySet,
+    /// Double tap of right Shift converts the last word.
+    pub double_right_shift: bool,
     /// Lowercased executable names.
     pub excluded_processes: Vec<String>,
     pub log_level: LogLevel,
@@ -49,6 +51,7 @@ impl Default for Config {
             keep_trailing_spaces: true,
             idle_reset_seconds: 30,
             hotkeys: HotkeySet::default(),
+            double_right_shift: true,
             excluded_processes: Vec::new(),
             log_level: LogLevel::Info,
         }
@@ -128,6 +131,7 @@ struct RawHotkeys {
     convert_last_line: Option<String>,
     convert_selection: Option<String>,
     toggle_pause: Option<String>,
+    double_right_shift: Option<bool>,
 }
 
 #[derive(Default, Deserialize)]
@@ -152,6 +156,10 @@ impl RawConfig {
             Some(tags) => parse_layouts(&tags)?,
         };
 
+        let double_right_shift = self
+            .hotkeys
+            .double_right_shift
+            .unwrap_or(defaults.double_right_shift);
         let hotkeys = self.hotkeys.validate(defaults.hotkeys)?;
 
         let mut excluded_processes = Vec::new();
@@ -178,6 +186,7 @@ impl RawConfig {
                 .idle_reset_seconds
                 .unwrap_or(defaults.idle_reset_seconds),
             hotkeys,
+            double_right_shift,
             excluded_processes,
             log_level: self.log.level.unwrap_or(defaults.log_level),
         })

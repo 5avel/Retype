@@ -24,6 +24,8 @@ convert_last_word = "Pause"
 convert_last_line = "Shift+Pause"
 convert_selection = "ScrollLock"
 toggle_pause      = "Ctrl+Pause"
+# Tap right Shift twice quickly to convert the last word.
+double_right_shift = true
 
 # Processes where retype does nothing (case-insensitive exe names).
 [exclusions]

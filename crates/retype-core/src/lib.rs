@@ -8,8 +8,10 @@
 
 pub mod buffer;
 pub mod config;
+pub mod doubletap;
 pub mod event;
 pub mod hotkey;
+pub mod indicator;
 pub mod inject;
 pub mod keystroke;
 pub mod layout;

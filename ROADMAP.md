@@ -47,6 +47,13 @@ Windows behaviour, an entry in `docs/manual-test-log.md`.
 - [ ] Layout indicator in the tray (optional)
 - [ ] Manual test (`docs/manual-tests/M5.md`)
 
+## M5.5 — Before 1.0 (owner's requests)
+
+- [x] Tray icon shows the current layout (EN/RU on a colored square, grey when paused)
+- [x] Double right Shift converts the last word (configurable)
+- [x] App icon ("re" + text cursor) embedded in the exe, without new dependencies
+- [ ] Manual test (`docs/manual-tests/M5.5.md`)
+
 ## M6 — Release 1.0
 
 - [ ] `/security-audit` clean

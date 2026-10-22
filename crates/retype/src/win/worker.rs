@@ -1,13 +1,16 @@
 //! Worker thread: feeds hook input into the core session and acts on commands.
 
 use std::fs;
+use std::sync::OnceLock;
 use std::sync::atomic::Ordering;
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime};
 
 use retype_core::event::{InputEvent, Millis};
+use retype_core::indicator::Indicator;
 use retype_core::keystroke::{Keystroke, Modifiers};
+use retype_core::layout::LayoutId;
 use retype_core::load::{LoadTrigger, load_config};
 use retype_core::plan::{ConversionPlan, PlanOp, Scope};
 use retype_core::selection::convert_selection;
@@ -30,14 +33,27 @@ const TICK: Duration = Duration::from_secs(1);
 /// other apps emptying the clipboard wait for it (see `owner`).
 const PUMP_INTERVAL: Duration = Duration::from_millis(50);
 
+/// How often the foreground layout is read for the tray indicator: the
+/// user's own switches (Alt+Shift, Win+Space) send no event we can hook.
+const INDICATOR_POLL: Duration = Duration::from_millis(200);
+
 /// How often the config file's modification time is checked (SPEC 5.5).
 const CONFIG_POLL: Duration = Duration::from_secs(2);
 
 /// Input as captured by the hook callbacks.
 #[derive(Debug, Clone, Copy)]
 pub enum HookInput {
-    Key { key: Keystroke, mods: Modifiers },
-    KeyUp { vk: u16 },
+    /// `time` is taken in the hook ([`now_millis`]), so a worker busy with a
+    /// conversion does not squeeze queued key timings together.
+    Key {
+        key: Keystroke,
+        mods: Modifiers,
+        time: Millis,
+    },
+    KeyUp {
+        vk: u16,
+        time: Millis,
+    },
     MouseClick,
     FocusChanged,
 }
@@ -51,6 +67,14 @@ pub enum WorkerMsg {
     /// "Reload config" chosen from the tray menu.
     ReloadConfig,
     Shutdown,
+}
+
+/// Milliseconds on retype's monotonic clock, shared by the hook (event
+/// times) and the worker (ticks).
+pub fn now_millis() -> Millis {
+    static START: OnceLock<Instant> = OnceLock::new();
+    let start = START.get_or_init(Instant::now);
+    Millis::try_from(start.elapsed().as_millis()).unwrap_or(Millis::MAX)
 }
 
 pub fn spawn(
@@ -71,7 +95,10 @@ struct Worker {
     paths: Paths,
     /// Modification time of the config file when it was last loaded.
     maybe_config_mtime: Option<SystemTime>,
-    started: Instant,
+    /// What the tray shows now.
+    maybe_indicator: Option<Indicator>,
+    /// The last foreground layout we could read, for the indicator.
+    maybe_last_layout: Option<LayoutId>,
 }
 
 impl Worker {
@@ -79,15 +106,16 @@ impl Worker {
         Self {
             executor: Executor::new(&session.config().layouts),
             maybe_config_mtime: modified(&paths),
+            maybe_indicator: None,
+            maybe_last_layout: None,
             session,
             tray,
             paths,
-            started: Instant::now(),
         }
     }
 
     fn now(&self) -> Millis {
-        Millis::try_from(self.started.elapsed().as_millis()).unwrap_or(Millis::MAX)
+        now_millis()
     }
 
     fn run(mut self, rx: &Receiver<WorkerMsg>) {
@@ -100,12 +128,18 @@ impl Worker {
         };
         log::info!("worker started");
         self.update_exclusion();
+        self.update_indicator();
         let mut last_tick = Instant::now();
         let mut last_config_check = Instant::now();
+        let mut last_indicator = Instant::now();
         loop {
             let message = rx.recv_timeout(PUMP_INTERVAL);
             if let Some(owner) = &owner {
                 owner.pump();
+            }
+            if last_indicator.elapsed() >= INDICATOR_POLL {
+                last_indicator = Instant::now();
+                self.update_indicator();
             }
             if OVERFLOW.swap(false, Ordering::Relaxed) {
                 log::warn!("input queue overflowed; buffer cleared");
@@ -146,12 +180,8 @@ impl Worker {
 
     fn translate(&mut self, input: HookInput) -> InputEvent {
         match input {
-            HookInput::Key { key, mods } => InputEvent::KeyDown {
-                key,
-                mods,
-                time: self.now(),
-            },
-            HookInput::KeyUp { vk } => InputEvent::KeyUp { vk },
+            HookInput::Key { key, mods, time } => InputEvent::KeyDown { key, mods, time },
+            HookInput::KeyUp { vk, time } => InputEvent::KeyUp { vk, time },
             HookInput::MouseClick => InputEvent::MouseClick,
             HookInput::FocusChanged => {
                 self.update_exclusion();
@@ -164,7 +194,7 @@ impl Worker {
         match command {
             Command::PauseChanged { paused } => {
                 PAUSED.store(paused, Ordering::Relaxed);
-                self.tray.notify_paused(paused);
+                self.update_indicator();
                 log::info!("{}", if paused { "paused" } else { "resumed" });
             }
             Command::Convert(scope) => self.convert(scope),
@@ -211,6 +241,25 @@ impl Worker {
         }
     }
 
+    /// Sends the tray a new indicator when the foreground layout or the pause
+    /// state changed. An unreadable layout (no foreground window) keeps the
+    /// last known one, so a pause change is still shown.
+    fn update_indicator(&mut self) {
+        if let Some(layout) = self.executor.foreground_layout_cached() {
+            self.maybe_last_layout = Some(layout);
+        }
+        let config = self.session.config();
+        let indicator = Indicator::new(
+            self.maybe_last_layout.as_ref(),
+            &config.layouts,
+            self.session.is_paused(),
+        );
+        if self.maybe_indicator.as_ref() != Some(&indicator) {
+            self.tray.notify_indicator(indicator.clone());
+            self.maybe_indicator = Some(indicator);
+        }
+    }
+
     /// Checks the foreground app against `exclusions.processes`. Process
     /// names are not logged: which apps the user runs is private too.
     fn update_exclusion(&mut self) {
@@ -245,6 +294,7 @@ impl Worker {
         self.executor.warn_missing(&config.layouts);
         self.session.set_config(config);
         self.update_exclusion();
+        self.update_indicator();
         log::info!("config reloaded");
     }
 }

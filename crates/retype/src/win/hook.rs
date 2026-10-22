@@ -26,7 +26,7 @@ use retype_core::hotkey::HotkeySet;
 use retype_core::inject::SIDED_MODIFIERS;
 use retype_core::keystroke::{Keystroke, Modifiers};
 
-use super::worker::{HookInput, WorkerMsg};
+use super::worker::{HookInput, WorkerMsg, now_millis};
 
 /// Shared with the callbacks, which receive no user data pointer.
 struct Shared {
@@ -271,6 +271,7 @@ fn on_key(message: u32, info: &KBDLLHOOKSTRUCT) -> bool {
         // Lets the session tell a hotkey's auto-repeat from a new press.
         send(HookInput::KeyUp {
             vk: u16::try_from(info.vkCode).unwrap_or(0),
+            time: now_millis(),
         });
         return false;
     }
@@ -284,7 +285,11 @@ fn on_key(message: u32, info: &KBDLLHOOKSTRUCT) -> bool {
         extended: (info.flags.0 & LLKHF_EXTENDED.0) != 0,
         shift: mods.shift,
     };
-    send(HookInput::Key { key, mods });
+    send(HookInput::Key {
+        key,
+        mods,
+        time: now_millis(),
+    });
 
     let guard = match HOTKEYS.try_lock() {
         Ok(guard) => guard,

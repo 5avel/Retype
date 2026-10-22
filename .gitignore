@@ -3,3 +3,4 @@
 # Personal Claude Code files
 CLAUDE.local.md
 .claude/settings.local.json
+__pycache__/
