@@ -16,3 +16,4 @@ generates a checklist; results are appended here.
 | 2026-10-22 | 5cd41bb        | Convert selection (M4.md)             | —       | ok     | user: works |
 | 2026-10-22 | 8defa3d        | Exclusions, autostart, reload (M5.md) | —       | ok     | user: partially checked, all ok |
 | 2026-10-22 | local (M5.5)   | App icon in Explorer (M5.5.md #18)    | —       | ok     | user screenshot |
+| 2026-10-22 | a82242c        | Double right Shift repeated (M5.5 #17a) | —     | known  | Sticky Keys prompt after 5 Shifts; documented |

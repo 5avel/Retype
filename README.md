@@ -112,6 +112,12 @@ Log: `%LOCALAPPDATA%\retype\retype.log` (event kinds and counts only).
   unchanged.
 - Two variants of one language (e.g. US and Dvorak) cannot both be
   configured.
+- Double right Shift: Windows offers to turn on Sticky Keys after five Shift
+  presses in a row, and retype's own typing does not reset that count, so
+  converting several words in a row with double Shift can bring up the
+  prompt. Answer "No" and turn off its shortcut in Settings → Accessibility
+  → Keyboard → Sticky keys → "Keyboard shortcut for Sticky keys", or use
+  `Pause`, or set `double_right_shift = false`.
 
 ## Documentation
 

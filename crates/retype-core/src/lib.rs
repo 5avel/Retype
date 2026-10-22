@@ -19,6 +19,7 @@ pub mod load;
 pub mod plan;
 pub mod selection;
 pub mod session;
+pub mod suggest;
 #[cfg(test)]
 mod testing;
 

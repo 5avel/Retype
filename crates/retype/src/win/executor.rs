@@ -7,6 +7,7 @@ use std::time::Duration;
 use retype_core::inject::{Step, execution_steps, restore_modifiers, wipe_actions};
 use retype_core::layout::{LayoutId, LayoutTable, missing_layouts};
 use retype_core::plan::{ConversionPlan, PlanOp};
+use retype_core::suggest::maybe_suggest_layout;
 
 use super::hook::{physical_modifiers, reconcile_modifiers};
 use super::input::send_input_keys;
@@ -71,7 +72,12 @@ impl Executor {
     pub fn warn_missing(&self, configured: &[LayoutId]) {
         let installed: Vec<LayoutId> = self.tables.iter().map(|(id, _)| id.clone()).collect();
         for id in missing_layouts(configured, &installed) {
-            log::warn!("configured layout {id} is not installed");
+            match maybe_suggest_layout(id, &installed) {
+                Some(suggestion) => log::warn!(
+                    "configured layout {id} is not installed; did you mean {suggestion}?"
+                ),
+                None => log::warn!("configured layout {id} is not installed"),
+            }
         }
     }
 

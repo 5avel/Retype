@@ -52,6 +52,7 @@ Why: Windows silently removes a low-level hook whose callback is slow
 | `load_config`         | `load`      | Which config to apply at startup and on reload         |
 | `DoubleTap`           | `doubletap` | Double right Shift detection                           |
 | `Indicator`           | `indicator` | Tray icon label, colors and rounded-square mask        |
+| `maybe_suggest_layout`| `suggest`   | "Did you mean uk-UA?" for unknown configured layouts  |
 
 The app supplies `LayoutTable`s (built with `ToUnicodeEx`) and executes plans;
 the core never calls the OS, which keeps it deterministic and unit-testable.

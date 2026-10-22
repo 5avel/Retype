@@ -59,6 +59,10 @@ Living document: add an entry whenever Windows behaviour surprises us.
   unassigned vk (`0xE8`) first ("mask key", as AutoHotkey does).
 - A held hotkey auto-repeats key-downs; LL hooks have no repeat flag, so
   repeats are told apart via key-ups.
+- Sticky Keys counts five Shift presses in a row; keys we inject in between
+  do not seem to reset the count, so repeated double-Shift conversions can
+  bring up the Sticky Keys prompt. Documented, not worked around (owner's
+  decision; changing the user's accessibility settings is not ours to do).
 - The LL hook never sees key-ups that happen on the secure desktop
   (Ctrl+Alt+Del, UAC, Win+L); self-tracked key state must be reconciled.
 - `SendInput` blocked by UIPI reports neither an error nor a short count.
